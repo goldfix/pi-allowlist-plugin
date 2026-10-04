@@ -209,6 +209,21 @@ Session approvals exist **only in memory**: they match the exact same call (tool
 are dropped on every new/resumed/forked session and on reload. To make something permanent, add
 a rule to the allowlist file.
 
+### Inspection command (`/allowlist`)
+
+Run `/allowlist` in Pi to view a diagnostic report of the effective gate configuration for the
+current project directory:
+
+- **Gate status**: `ENABLED` or `DISABLED`
+- **Project trust**: `Trusted` or `Untrusted` (explaining if `.pi/allowlist-gate.json` is ignored)
+- **Config files**: paths to the global and project configuration files and whether they were found
+- **Deny rules**: full list of effective deny rules
+- **Allow rules**: full list of effective allow rules
+- **Session approvals**: count and details of tool calls approved via "Allow for session" in the current session
+- **Warnings**: any JSON syntax errors or ignored files
+
+Configuration is resolved live, so changes to config files are reflected immediately.
+
 ## Known limitations
 
 The gate is a guard rail against mistakes and careless prompts, **not a sandbox**.
@@ -238,10 +253,10 @@ properties, `import type` for types) and relative imports with explicit `.ts` ex
 
 ```
 extensions/allowlist-gate/
-  index.ts    extension entry: the tool_call / session_start handlers, approval dialog
+  index.ts    extension entry: the tool_call / session_start handlers, /allowlist command, dialog
   policy.ts   pure matching: rules, wildcards, splitCommands(), evaluate()
   paths.ts    pure path normalization and inside/outside-project classification
-  config.ts   JSON file configuration: defaults, global+project merge, fail-safe loading
+  config.ts   JSON file configuration: defaults, global+project merge, status report
 test/         node --test suites (policy, paths, config, gate wiring with a fake Pi API)
 ```
 

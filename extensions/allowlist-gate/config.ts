@@ -169,3 +169,93 @@ export function loadConfig(options: LoadConfigOptions): GateConfig {
   const merged = mergeFileConfigs(globalFile.config, projectConfig);
   return { ...resolveConfig(merged), warnings };
 }
+
+export interface StatusReportOptions {
+  enabled: boolean;
+  projectTrusted: boolean;
+  globalPath: string;
+  globalExists: boolean;
+  projectPath: string;
+  projectExists: boolean;
+  deny: readonly string[];
+  allow: readonly string[];
+  sessionApproved?: readonly string[];
+  warnings?: readonly string[];
+}
+
+/** Formats a multi-line diagnostic report of the effective gate configuration. */
+export function formatStatusReport(options: StatusReportOptions): string {
+  const lines: string[] = [
+    `Allowlist Gate: ${options.enabled ? "ENABLED" : "DISABLED"}`,
+    `Project trust:  ${options.projectTrusted ? "Trusted" : "Untrusted (project config ignored)"}`,
+    "",
+    "Config files:",
+    `  Global:  ${options.globalExists ? options.globalPath : `${options.globalPath} (not found)`}`,
+  ];
+
+  if (!options.projectExists) {
+    lines.push("  Project: (none)");
+  } else if (options.projectTrusted) {
+    lines.push(`  Project: ${options.projectPath}`);
+  } else {
+    lines.push(`  Project: ${options.projectPath} (IGNORED: untrusted project)`);
+  }
+
+  lines.push("", `Deny rules (${options.deny.length}):`);
+  if (options.deny.length > 0) {
+    for (const rule of options.deny) lines.push(`  - ${rule}`);
+  } else {
+    lines.push("  (none)");
+  }
+
+  lines.push("", `Allow rules (${options.allow.length}):`);
+  if (options.allow.length > 0) {
+    for (const rule of options.allow) lines.push(`  - ${rule}`);
+  } else {
+    lines.push("  (none)");
+  }
+
+  const session = options.sessionApproved ?? [];
+  lines.push("", `Session approvals (${session.length}):`);
+  if (session.length > 0) {
+    for (const item of session) lines.push(`  - ${item}`);
+  } else {
+    lines.push("  (none)");
+  }
+
+  const warnings = options.warnings ?? [];
+  if (warnings.length > 0) {
+    lines.push("", "Warnings:");
+    for (const warning of warnings) lines.push(`  ! ${warning}`);
+  }
+
+  return lines.join("\n");
+}
+
+export interface BuildStatusReportOptions extends LoadConfigOptions {
+  sessionApproved?: readonly string[];
+  seedWarning?: string;
+}
+
+/** Resolves configuration and formats the full status report. */
+export function buildStatusReport(options: BuildStatusReportOptions): string {
+  const config = loadConfig(options);
+  if (options.seedWarning) config.warnings.unshift(options.seedWarning);
+
+  const gPath = globalConfigPath(options.agentDir);
+  const pPath = projectConfigPath(options.cwd, options.configDirName);
+
+  return formatStatusReport({
+    enabled: config.enabled,
+    projectTrusted: options.projectTrusted,
+    globalPath: gPath,
+    globalExists: existsSync(gPath),
+    projectPath: pPath,
+    projectExists: existsSync(pPath),
+    deny: config.deny,
+    allow: config.allow,
+    sessionApproved: options.sessionApproved,
+    warnings: config.warnings,
+  });
+}
+

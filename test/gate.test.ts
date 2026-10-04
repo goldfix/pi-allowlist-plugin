@@ -26,6 +26,11 @@ interface FakeCtx {
   };
 }
 
+interface CommandRegistration {
+  description?: string;
+  handler: (args: string, ctx: FakeCtx) => Promise<void>;
+}
+
 type ToolCallHandler = (event: ToolCallEvent, ctx: FakeCtx) => Promise<ToolCallEventResult | undefined>;
 
 function makeCtx(cwd: string, hasUI: boolean, trusted = true): FakeCtx {
@@ -57,6 +62,7 @@ describe("allowlist gate", () => {
   let cwd: string;
   let handler: ToolCallHandler;
   let sessionStart: () => void;
+  let commands: Map<string, CommandRegistration>;
   let savedEnv: Record<string, string | undefined>;
   let ctx: FakeCtx;
 
@@ -68,10 +74,14 @@ describe("allowlist gate", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
 
     const handlers = new Map<string, (...args: never[]) => unknown>();
+    commands = new Map<string, CommandRegistration>();
     const fakePi = {
       on(event: string, h: (...args: never[]) => unknown) {
         handlers.set(event, h);
         return () => undefined;
+      },
+      registerCommand(name: string, options: CommandRegistration) {
+        commands.set(name, options);
       },
     } as unknown as ExtensionAPI;
     allowlistGate(fakePi);
@@ -307,6 +317,89 @@ describe("allowlist gate", () => {
       await handler(bash("git status"), uiCtx);
       assert.equal(uiCtx.ui.notifications.length, 1);
       assert.match(uiCtx.ui.notifications[0], /cannot be read/);
+    });
+  });
+
+  describe("/allowlist command", () => {
+    it("registers the /allowlist slash command", () => {
+      assert.ok(commands.has("allowlist"));
+      assert.match(commands.get("allowlist")?.description ?? "", /allowlist/i);
+    });
+
+    it("shows status, project trust, global config and default rules", async () => {
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", ctx);
+      assert.equal(ctx.ui.notifications.length, 1);
+      const report = ctx.ui.notifications[0];
+      assert.match(report, /Allowlist Gate:\s*ENABLED/);
+      assert.match(report, /Project trust:\s*Trusted/);
+      assert.match(report, /Global:\s*.+allowlist-gate\.json/);
+      assert.match(report, /Project:\s*\(none\)/);
+      assert.match(report, /Deny rules \(0\)/);
+      assert.match(report, /Allow rules \(11\)/);
+      assert.match(report, /shell:git status \*/);
+      assert.match(report, /Session approvals \(0\)/);
+    });
+
+    it("shows project configuration when project is trusted", async () => {
+      mkdirSync(join(cwd, ".pi"), { recursive: true });
+      writeFileSync(join(cwd, ".pi", "allowlist-gate.json"), JSON.stringify({ allow: ["shell:ls *"], deny: ["shell:rm *"] }));
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", ctx);
+      const report = ctx.ui.notifications[0];
+      assert.match(report, /Project:\s*.+\.pi[/\\]allowlist-gate\.json/);
+      assert.doesNotMatch(report, /IGNORED/);
+      assert.match(report, /Deny rules \(1\)/);
+      assert.match(report, /shell:rm \*/);
+      assert.match(report, /Allow rules \(1\)/);
+      assert.match(report, /shell:ls \*/);
+    });
+
+    it("flags project config as ignored when project is untrusted", async () => {
+      mkdirSync(join(cwd, ".pi"), { recursive: true });
+      writeFileSync(join(cwd, ".pi", "allowlist-gate.json"), JSON.stringify({ allow: ["shell:*"] }));
+      const untrustedCtx = makeCtx(cwd, true, false);
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", untrustedCtx);
+      const report = untrustedCtx.ui.notifications[0];
+      assert.match(report, /Project trust:\s*Untrusted/);
+      assert.match(report, /IGNORED: untrusted project/);
+      assert.match(report, /Warnings:/);
+      assert.match(report, /ignored because the project is not trusted/);
+    });
+
+    it("lists active session approvals", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = "Allow for session";
+      await handler(bash("git push origin main"), uiCtx);
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", uiCtx);
+      const report = uiCtx.ui.notifications[uiCtx.ui.notifications.length - 1];
+      assert.match(report, /Session approvals \(1\)/);
+      assert.match(report, /bash git push origin main/);
+    });
+
+    it("shows DISABLED when gate is disabled", async () => {
+      writeGlobalConfig({ enabled: false });
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", ctx);
+      const report = ctx.ui.notifications[0];
+      assert.match(report, /Allowlist Gate:\s*DISABLED/);
+    });
+
+    it("shows config warnings when JSON is invalid", async () => {
+      writeGlobalConfig("{bad-json");
+      const cmd = commands.get("allowlist");
+      assert.ok(cmd);
+      await cmd.handler("", ctx);
+      const report = ctx.ui.notifications[0];
+      assert.match(report, /Warnings:/);
+      assert.match(report, /cannot be read/);
     });
   });
 });

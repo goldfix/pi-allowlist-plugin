@@ -34,10 +34,11 @@ Port the feature set of the sibling OpenCode plugin kept under `source_app/openc
 ```
 extensions/
   allowlist-gate/
-    index.ts    → extension entry (default factory): `tool_call` + `session_start` handlers, dialog
+    index.ts    → extension entry (default factory): `tool_call` + `session_start` handlers,
+                  `/allowlist` command, dialog
     policy.ts   → pure allowlist/denylist matching, `splitCommands()` (no external dependencies)
     paths.ts    → pure path normalization + inside/outside-project classification
-    config.ts   → configuration resolution (JSON files), fail-safe loading
+    config.ts   → configuration resolution (JSON files), status report, fail-safe loading
 test/
   policy.test.ts  → pure matching: wildcards, splitCommands (bypass regressions, posix/powershell),
                     shell/edit/MCP/generic, deny-wins, forceAsk, passthrough
@@ -65,6 +66,11 @@ Main handler: `pi.on("tool_call", …)`. It derives `(toolName, resources)` from
 - safe read-only tools → untouched (`undefined`, no dialog).
 
 A second handler, `session_start`, clears the in-memory session approvals.
+
+The extension also registers a slash command `pi.registerCommand("allowlist", …)` that displays a
+live status report: enabled state, project trust status, global and project configuration file paths
+(flagging untrusted project files as ignored), effective deny and allow rules, active session approvals,
+and any syntax or permission warnings.
 
 Rule syntax is `scope:pattern` with OpenCode-like wildcards (`*`, `?`):
 

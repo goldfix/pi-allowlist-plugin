@@ -27,7 +27,7 @@ import {
   type ToolCallEvent,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { ensureGlobalConfigFile, loadConfig } from "./config.ts";
+import { buildStatusReport, ensureGlobalConfigFile, loadConfig } from "./config.ts";
 import { classifyPath } from "./paths.ts";
 import { evaluate, shellKindOf, splitCommands } from "./policy.ts";
 
@@ -126,6 +126,29 @@ export default function allowlistGate(pi: ExtensionAPI): void {
   // Approvals never outlive the session they were granted in.
   pi.on("session_start", () => {
     sessionAllowed.clear();
+  });
+
+  function describeSessionApproval(key: string): string {
+    const parts = key.split("\n");
+    const toolName = parts[0] ?? "";
+    const resources = parts.slice(1).filter((r) => r.length > 0);
+    return describeCall(toolName, resources);
+  }
+
+  pi.registerCommand("allowlist", {
+    description: "Show effective allowlist gate configuration and active rules",
+    handler: async (_args, ctx) => {
+      const seedWarning = ensureGlobalConfigFile(getAgentDir());
+      const report = buildStatusReport({
+        cwd: ctx.cwd,
+        agentDir: getAgentDir(),
+        configDirName: CONFIG_DIR_NAME,
+        projectTrusted: ctx.isProjectTrusted(),
+        sessionApproved: Array.from(sessionAllowed).map(describeSessionApproval),
+        seedWarning,
+      });
+      ctx.ui.notify(report, "info");
+    },
   });
 
   pi.on("tool_call", async (event, ctx) => {

@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_ALLOW,
+  buildStatusReport,
   ensureGlobalConfigFile,
+  formatStatusReport,
   globalConfigPath,
   loadConfig,
   loadFileConfig,
@@ -166,5 +168,89 @@ describe("ensureGlobalConfigFile", () => {
     writeFileSync(target(), JSON.stringify({ allow: ["shell:custom *"] }));
     assert.equal(ensureGlobalConfigFile(agentDir), undefined);
     assert.equal(readFileSync(target(), "utf-8"), JSON.stringify({ allow: ["shell:custom *"] }));
+  });
+});
+
+describe("formatStatusReport and buildStatusReport", () => {
+  let agentDir: string;
+  let cwd: string;
+  beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "allowlist-report-agent-"));
+    cwd = mkdtempSync(join(tmpdir(), "allowlist-report-proj-"));
+  });
+  afterEach(() => {
+    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("formatStatusReport formats clean text with all sections", () => {
+    const report = formatStatusReport({
+      enabled: true,
+      projectTrusted: true,
+      globalPath: "/agent/allowlist-gate.json",
+      globalExists: true,
+      projectPath: "/proj/.pi/allowlist-gate.json",
+      projectExists: false,
+      deny: [],
+      allow: ["shell:git status *"],
+      sessionApproved: ["bash git push origin main"],
+      warnings: ["test warning"],
+    });
+
+    assert.match(report, /Allowlist Gate:\s*ENABLED/);
+    assert.match(report, /Project trust:\s*Trusted/);
+    assert.match(report, /Global:\s*\/agent\/allowlist-gate\.json/);
+    assert.match(report, /Project:\s*\(none\)/);
+    assert.match(report, /Deny rules \(0\):\n\s*\(none\)/);
+    assert.match(report, /Allow rules \(1\):\n\s*- shell:git status \*/);
+    assert.match(report, /Session approvals \(1\):\n\s*- bash git push origin main/);
+    assert.match(report, /Warnings:\n\s*! test warning/);
+  });
+
+  it("formatStatusReport flags untrusted project and disabled state", () => {
+    const report = formatStatusReport({
+      enabled: false,
+      projectTrusted: false,
+      globalPath: "/agent/allowlist-gate.json",
+      globalExists: false,
+      projectPath: "/proj/.pi/allowlist-gate.json",
+      projectExists: true,
+      deny: ["shell:rm *"],
+      allow: [],
+    });
+
+    assert.match(report, /Allowlist Gate:\s*DISABLED/);
+    assert.match(report, /Project trust:\s*Untrusted \(project config ignored\)/);
+    assert.match(report, /Global:\s*\/agent\/allowlist-gate\.json \(not found\)/);
+    assert.match(report, /Project:\s*\/proj\/\.pi\/allowlist-gate\.json \(IGNORED: untrusted project\)/);
+    assert.match(report, /Deny rules \(1\):\n\s*- shell:rm \*/);
+    assert.match(report, /Allow rules \(0\):\n\s*\(none\)/);
+    assert.match(report, /Session approvals \(0\):\n\s*\(none\)/);
+    assert.doesNotMatch(report, /Warnings:/);
+  });
+
+  it("buildStatusReport resolves live files and attaches warnings", () => {
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(globalConfigPath(agentDir), JSON.stringify({ allow: ["shell:git status *"] }));
+
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(projectConfigPath(cwd, ".pi"), JSON.stringify({ deny: ["shell:rm *"] }));
+
+    const report = buildStatusReport({
+      agentDir,
+      cwd,
+      configDirName: ".pi",
+      projectTrusted: true,
+      sessionApproved: ["write notes/todo.md"],
+      seedWarning: "seeded global file",
+    });
+
+    assert.match(report, /Allowlist Gate:\s*ENABLED/);
+    assert.match(report, /Project trust:\s*Trusted/);
+    assert.match(report, /Deny rules \(1\)/);
+    assert.match(report, /Allow rules \(1\)/);
+    assert.match(report, /Session approvals \(1\)/);
+    assert.match(report, /write notes\/todo\.md/);
+    assert.match(report, /Warnings:\n\s*! seeded global file/);
   });
 });
