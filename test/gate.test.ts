@@ -5,7 +5,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
@@ -19,7 +19,7 @@ interface FakeCtx {
   ui: {
     selectCalls: Array<{ title: string; options: string[] }>;
     notifications: string[];
-    /** Choice returned by the next dialogs; a function allows per-call answers. */
+    /** Choice returned by the next dialogs. */
     nextChoice: string | undefined;
     select(title: string, options: string[]): Promise<string | undefined>;
     notify(message: string): void;
@@ -50,7 +50,7 @@ function makeEvent(toolName: string, input: Record<string, unknown>): ToolCallEv
   return { type: "tool_call", toolCallId: "test-1", toolName, input } as ToolCallEvent;
 }
 
-const ENV_KEYS = ["ALLOWLIST_GATE_ALLOW", "ALLOWLIST_GATE_DENY", "ALLOWLIST_GATE_ENABLED", "PI_CODING_AGENT_DIR"];
+const ENV_KEYS = ["PI_CODING_AGENT_DIR"];
 
 describe("allowlist gate", () => {
   let agentDir: string;
@@ -272,9 +272,18 @@ describe("allowlist gate", () => {
   });
 
   describe("configuration", () => {
+    it("seeds the global config file on first use", async () => {
+      const target = join(agentDir, "extensions", "allowlist-gate.json");
+      assert.equal(await handler(bash("git status"), ctx), undefined);
+      const seeded = JSON.parse(readFileSync(target, "utf-8")) as { allow: string[] };
+      assert.ok(seeded.allow.includes("shell:git status *"));
+    });
+
     it("a disabled gate passes everything", async () => {
-      process.env.ALLOWLIST_GATE_ENABLED = "0";
+      mkdirSync(join(agentDir, "extensions"), { recursive: true });
+      writeFileSync(join(agentDir, "extensions", "allowlist-gate.json"), JSON.stringify({ enabled: false }));
       assert.equal(await handler(bash("git push origin main"), ctx), undefined);
+      assert.equal(ctx.ui.selectCalls.length, 0);
     });
 
     it("the project file is ignored when the project is not trusted", async () => {

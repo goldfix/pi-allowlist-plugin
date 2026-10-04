@@ -24,37 +24,78 @@ Precedence: **deny wins over allow, allow wins over ask.** Dismissing the dialog
 
 ## Installation
 
+Pi installs this repository as a **Pi package** — no build step, the `.ts` sources load
+directly. Pick one source. Pi packages run with your permissions, so review the source of
+anything you install.
+
 ### From npm
 
 ```bash
-pi install npm:pi-allowlist-plugin            # for your user (~/.pi/agent/settings.json)
-pi install -l npm:pi-allowlist-plugin         # for the current project only (.pi/settings.json)
+pi install npm:pi-allowlist-plugin              # personal (~/.pi/agent/settings.json)
+pi install -l npm:pi-allowlist-plugin           # project-only (.pi/settings.json)
 ```
 
-Pin a version with `npm:pi-allowlist-plugin@0.1.0`. Pi packages run with your permissions,
-so review the source of anything you install.
+Pin a version with `npm:pi-allowlist-plugin@0.1.0`.
 
-### Manual
-
-Clone the repository, then use one of:
+### From GitHub
 
 ```bash
-# Load it as a local Pi package (no copy, follows your checkout)
-pi install /path/to/pi-allowlist-plugin
+pi install git:github.com/goldfix/pi-allowlist-plugin@v0.1.0
+```
 
-# Try it for a single run without installing
+Tags and commits are pinned: later
+`pi update <source>` reconciles the checkout but does not move the configured ref.
+A plain URL (`https://github.com/goldfix/pi-allowlist-plugin`) works the same way.
+
+### From a local checkout
+
+```bash
+git clone https://github.com/goldfix/pi-allowlist-plugin.git
+pi install ./pi-allowlist-plugin
+```
+
+Local packages are loaded from the resolved path without copying, so the install
+follows your checkout (update with `git pull`, then `/reload` in Pi).
+
+### Try without installing
+
+```bash
+pi -e npm:pi-allowlist-plugin
+pi -e ./pi-allowlist-plugin
 pi -e /path/to/pi-allowlist-plugin/extensions/allowlist-gate
+```
 
-# Or copy the extension folder into Pi's extension directory
+### Manual copy (fallback)
+
+```bash
 cp -r /path/to/pi-allowlist-plugin/extensions/allowlist-gate ~/.pi/agent/extensions/allowlist-gate
 ```
 
-On Windows the extension directory is `%USERPROFILE%\.pi\agent\extensions\`. If you set
-`PI_CODING_AGENT_DIR`, use `<that dir>/extensions/` instead. After changing installed
-extensions run `/reload` inside Pi (or restart it).
+On Windows (PowerShell):
 
-> Avoid loading the extension twice (for example a package *and* a copy in `extensions/`):
-> each copy would gate every call and ask twice.
+```powershell
+Copy-Item -Recurse pi-allowlist-plugin\extensions\allowlist-gate $env:USERPROFILE\.pi\agent\extensions\
+```
+
+If you set `PI_CODING_AGENT_DIR`, use `<that dir>/extensions/` instead of `~/.pi/agent/extensions/`.
+After a manual copy run `/reload` inside Pi (or restart it).
+
+### Managing the install
+
+```bash
+pi list                  # show configured packages
+pi remove <source>      # remove a package and its settings entry
+pi update --extensions   # reconcile installed packages
+pi update <source>      # update one package
+```
+
+Personal installs are written to `~/.pi/agent/settings.json`; `-l` / `--local` writes to
+`.pi/settings.json` of the current project. Project packages load only after
+[project trust](https://pi.dev/docs/security#understand-project-trust) is granted —
+review project package declarations before trusting a folder.
+
+> Avoid loading the extension twice (for example a package *and* a manual copy in
+> `extensions/`): each copy would gate every call and ask twice.
 
 ## Rule syntax
 
@@ -116,9 +157,12 @@ tool a script calls goes through the gate individually.
 Two JSON files with the same shape, both optional. Project values override global ones **key by
 key, and lists replace wholesale** (a project `allow` must repeat everything you want).
 
+The global file is **created automatically with the built-in defaults the first time the
+gate runs**, so the user finds it ready to edit.
+
 | File | Scope |
 |---|---|
-| `<agent-dir>/extensions/allowlist-gate.json` (`~/.pi/agent/extensions/…`) | global |
+| `<agent-dir>/extensions/allowlist-gate.json` (`~/.pi/agent/extensions/…`) | global (auto-created) |
 | `<project>/.pi/allowlist-gate.json` | project — read **only if the project is trusted** |
 
 ```jsonc
@@ -141,21 +185,10 @@ key, and lists replace wholesale** (a project `allow` must repeat everything you
 
 The files are re-read on every tool call, so edits apply immediately (no `/reload`).
 
-**Defaults** (used for any list the files and environment do not define): allow
-`git status/diff/log`, `ls`, `cat`, `pwd`, `echo` and `mcp:docs-mcp-server`; deny nothing.
+**Defaults** (used for any list the files do not define): allow
+`git status/diff/log`, `ls`, `cat`, `pwd`, `echo`, `wc`, `grep`, `tail` and
+`mcp:docs-mcp-server`; deny nothing.
 An explicit `"allow": []` disables the default allowlist.
-
-**Environment fallback** — used only for keys the files do not define:
-
-| Variable | Meaning |
-|---|---|
-| `ALLOWLIST_GATE_ALLOW` | allow rules, comma- or newline-separated |
-| `ALLOWLIST_GATE_DENY` | deny rules, comma- or newline-separated |
-| `ALLOWLIST_GATE_ENABLED` | `1/true/yes/on` or `0/false/no/off` |
-
-```bash
-ALLOWLIST_GATE_ALLOW="shell:git status *,shell:ls *" ALLOWLIST_GATE_DENY="shell:rm -rf *" pi
-```
 
 **Fail-safe loading.** An invalid file never widens access: it is treated as `{"allow": []}`
 (nothing is auto-allowed, everything gated asks) and a warning is shown once. A project file in
@@ -200,7 +233,7 @@ extensions/allowlist-gate/
   index.ts    extension entry: the tool_call / session_start handlers, approval dialog
   policy.ts   pure matching: rules, wildcards, splitCommands(), evaluate()
   paths.ts    pure path normalization and inside/outside-project classification
-  config.ts   JSON + env configuration, merge, fail-safe loading
+  config.ts   JSON file configuration: defaults, global+project merge, fail-safe loading
 test/         node --test suites (policy, paths, config, gate wiring with a fake Pi API)
 ```
 

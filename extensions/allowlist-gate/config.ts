@@ -1,5 +1,5 @@
 /**
- * Configuration resolution: JSON files + environment, no other persistence.
+ * Configuration resolution: JSON files only, no other persistence.
  *
  * Two JSON files are merged (project wins, lists replaced wholesale):
  * - global:  `<agent-dir>/extensions/allowlist-gate.json`
@@ -16,11 +16,6 @@
  * }
  * ```
  *
- * Environment fallback (same names as the OpenCode sibling plugin):
- * - `ALLOWLIST_GATE_ALLOW` / `ALLOWLIST_GATE_DENY`: comma- or newline-separated
- *   rule lists. Used only when the merged files do not define that list.
- * - `ALLOWLIST_GATE_ENABLED`: `1/true/yes/on` or `0/false/no/off`.
- *
  * Defaults are intentionally minimal: a few read-only shell commands pass,
  * everything else gated asks. An explicit `"allow": []` disables the defaults.
  *
@@ -28,8 +23,8 @@
  * `{ "allow": [] }` (nothing is auto-allowed, everything gated asks) and a
  * warning is reported through {@link GateConfig.warnings}.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { RuleLists } from "./policy.ts";
 
 export const CONFIG_FILE_NAME = "allowlist-gate.json";
@@ -52,7 +47,8 @@ export interface LoadedFile {
   warning?: string;
 }
 
-const DEFAULT_ALLOW: string[] = [
+/** Built-in allowlist, used as the default and as the seed for a new global file. */
+export const DEFAULT_ALLOW: string[] = [
   "shell:git status *",
   "shell:git diff *",
   "shell:git log *",
@@ -60,6 +56,9 @@ const DEFAULT_ALLOW: string[] = [
   "shell:cat *",
   "shell:pwd *",
   "shell:echo *",
+  "shell:wc *",
+  "shell:grep *",
+  "shell:tail *",
   "mcp:docs-mcp-server",
 ];
 
@@ -81,12 +80,12 @@ function toBool(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-/** Combine file-level settings with the environment fallback and defaults. */
-export function resolveConfig(fileConfig: FileConfig, env: NodeJS.ProcessEnv = {}): Omit<GateConfig, "warnings"> {
+/** Combine file-level settings with the built-in defaults. */
+export function resolveConfig(fileConfig: FileConfig): Omit<GateConfig, "warnings"> {
   return {
-    enabled: toBool(fileConfig.enabled ?? env.ALLOWLIST_GATE_ENABLED, true),
-    allow: toStringList(fileConfig.allow ?? env.ALLOWLIST_GATE_ALLOW) ?? [...DEFAULT_ALLOW],
-    deny: toStringList(fileConfig.deny ?? env.ALLOWLIST_GATE_DENY) ?? [],
+    enabled: toBool(fileConfig.enabled, true),
+    allow: toStringList(fileConfig.allow) ?? [...DEFAULT_ALLOW],
+    deny: toStringList(fileConfig.deny) ?? [],
   };
 }
 
@@ -97,6 +96,27 @@ export function mergeFileConfigs(globalConfig: FileConfig, projectConfig: FileCo
     allow: projectConfig.allow ?? globalConfig.allow,
     deny: projectConfig.deny ?? globalConfig.deny,
   };
+}
+
+/**
+ * Create the global config file with the built-in defaults when it is missing,
+ * so the user finds it ready to edit. Never overwrites an existing file (the
+ * `wx` flag makes the creation atomic under concurrent tool calls).
+ * Returns a warning when the file cannot be created, otherwise `undefined`.
+ */
+export function ensureGlobalConfigFile(agentDir: string): string | undefined {
+  const path = globalConfigPath(agentDir);
+  if (existsSync(path)) return undefined;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const seed = { enabled: true, allow: [...DEFAULT_ALLOW], deny: [] as string[] };
+    writeFileSync(path, JSON.stringify(seed, null, 2) + "\n", { flag: "wx" });
+    return undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") return undefined; // won by a concurrent call
+    return `${path}: cannot create the default config (${error}); using built-in defaults`;
+  }
 }
 
 /** Read one JSON config file; a missing file yields `{}`, an invalid one fails safe. */
@@ -128,10 +148,9 @@ export interface LoadConfigOptions {
   configDirName: string;
   /** Whether the project config file may be honored. */
   projectTrusted: boolean;
-  env?: NodeJS.ProcessEnv;
 }
 
-/** Full resolution for one working directory: files + env. */
+/** Full resolution for one working directory: global + project files. */
 export function loadConfig(options: LoadConfigOptions): GateConfig {
   const warnings: string[] = [];
   const globalFile = loadFileConfig(globalConfigPath(options.agentDir));
@@ -148,5 +167,5 @@ export function loadConfig(options: LoadConfigOptions): GateConfig {
   }
 
   const merged = mergeFileConfigs(globalFile.config, projectConfig);
-  return { ...resolveConfig(merged, options.env ?? process.env), warnings };
+  return { ...resolveConfig(merged), warnings };
 }

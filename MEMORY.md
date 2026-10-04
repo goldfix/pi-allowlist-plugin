@@ -9,8 +9,11 @@
 - Docs Pi locali: `C:\tc\Program\pi_agent\` (`docs/*.md`, `examples/extensions/`). Tipi ufficiali:
   scaricati con `npm pack @earendil-works/pi-coding-agent` in `/tmp/pi-types/package/dist/`
   (file chiave: `core/extensions/types.d.ts`, `utils/paths.js`, `core/tools/*.d.ts`).
-- Stato: implementazione completa e rivista, **92 test verdi**, README compilato. Non ancora provata in un
-  Pi reale (regola: non lanciare `pi` da qui — lo fa l'utente).
+- Stato: implementazione completa e rivista, **95 test verdi**, README/AGENTS/MEMORY aggiornati. Non ancora
+  provata in un Pi reale (regola: non lanciare `pi` da qui — lo fa l'utente).
+- Repo git: remote `origin = git@github.com:goldfix/pi-allowlist-plugin.git`; branch `main` esistente.
+  Al momento dell'ultima revisione il worktree era sul branch `task/small_improve` con modifiche non
+  committate (git/commit/push e `npm publish` sono a cura dell'utente).
 
 ## Sessione 1 — avvio progetto (sintesi)
 - La cartella era la copia del progetto OpenCode; `AGENTS.md`/`MEMORY.md`/`README.md` erano stub.
@@ -81,17 +84,62 @@ letture fuori progetto non gated (scelta voluta).
 `package.json` (script test + prepublishOnly), `tsconfig.json`, `.gitignore`, `README.md` (compilato, inglese),
 `AGENTS.md` (riscritto), `MEMORY.md`.
 
-## Prossimi passi
-1. Prova live in Pi reale (`pi -e ./extensions/allowlist-gate`) — a cura dell'utente — e iterare sul testo del dialogo
-   (verificare in particolare: dialoghi con comandi lunghi/multilinea, `ctx.signal` su abort, comportamento di
-   `session_start` con `reload`).
-2. Valutare un comando `/allowlist` (mostra config effettiva/warning, simula una decisione).
-3. Prima della pubblicazione: impostare `repository`/`homepage`/`bugs` in `package.json` (URL GitHub ignoto),
-   verificare che il nome npm `pi-allowlist-plugin` sia libero, `npm pack --dry-run`; `npm publish` è comando dell'utente.
-4. `package-lock.json` è stato generato da `npm install` (decidere se versionarlo; `.gitignore` non lo esclude).
+## Prossimi passi (aggiornato — sessione 8)
+1. **Compact + verifiche di installazione** (a cura dell'utente): provare `pi install` da npm, git e percorso
+   locale, poi `pi list` e `pi -e`; verificare che l'estensione carichi una sola volta e che il seed del config
+   globale avvenga in `<agent-dir>/extensions/`.
+2. Prova live dei dialoghi: comandi lunghi/multilinea, `ctx.signal` su abort, `session_start` con `reload`,
+   messaggio di blocco senza UI (print/JSON mode).
+3. Valutare un comando `/allowlist` (mostra config effettiva + warning, o simula una decisione).
+4. Pubblicazione: `npm publish` (nome libero) e release/tag GitHub `v0.1.0` — comandi dell'utente.
+5. `package-lock.json`: presente, non escluso da `.gitignore` (proposto di versionarlo).
 
 ## Sessione 3 — preparazione npm/GitHub
 - Nome `pi-allowlist-plugin` verificato libero su npm (404 dal registry).
 - Package pronto: `npm run check` verde (92 test), `npm pack --dry-run` = 7 file, ~13,5 kB.
 - `repository`/`homepage`/`bugs` NON inseriti (URL GitHub ignoto): snippet pronto da aggiungere.
 - Git repo + push + `npm publish` a cura dell'utente. `package-lock.json`: proposto di versionarlo.
+
+## Sessione 4 — docs di installazione via Pi package
+- Verificata la doc nativa di Pi (`pi install` da npm/git/locale, `-e` per provare, `pi list/remove/update`;
+  i package di progetto richiedono project trust). Nessuna modifica al codice necessaria: la struttura
+  convenzionale `extensions/allowlist-gate/` + keyword `pi-package` è già sufficiente.
+- README: sezione Installation riscritta con i percorsi npm, GitHub (`<owner>` placeholder), checkout locale,
+  prova senza installare, copia manuale e gestione dell'install. AGENTS §5 aggiornato di conseguenza.
+
+## Sessione 5 — default allowlist estesa
+- Aggiunti ai default `shell:wc *`, `shell:grep *`, `shell:tail *` (comandi read-only).
+  Test config esteso (3 assert sui nuovi default), README aggiornato. Check verde (92 test).
+- Nota da verificare in live: `shell:grep *` in allowlist rende meno rumoroso il gate ma non copre
+  l'uso via tool `grep` built-in (che è in passthrough comunque).
+
+## Sessione 6 — seed automatico del config globale
+- Richiesta: l'utente deve trovarsi `allowlist-gate.json` già pronto nella conf di Pi.
+- Implementato `ensureGlobalConfigFile()` in `config.ts`: alla prima `tool_call`, se il file globale
+  manca, lo crea con i default incorporati (`{enabled:true, allow:[...DEFAULT_ALLOW], deny:[]}`).
+  Mai sovrascritto; creazione atomica (`wx`) per le tool call parallele; saltato quando env
+  (`ALLOWLIST_GATE_ALLOW/DENY/ENABLED=0`) già configura il gate, per non oscurare il fallback env.
+  Chiamato all'inizio dell'handler in `index.ts` (warning in testa a `config.warnings` se fallisce).
+- Test: 3 in `config.test.ts` (seed, no-overwrite, skip env) + 1 in `gate.test.ts` (seed on first use)
+  e adeguato il test "disabled gate" (non deve creare nulla). Totale 96 test verdi.
+- README (nota nella sezione Configuration) e AGENTS §4 aggiornati.
+
+## Sessione 7 — rimozione variabili di ambiente
+- Richiesta: alleggerire l'implementazione, config solo da file JSON.
+- Rimosso da `config.ts`: parametro `env` di `resolveConfig`/`loadConfig`/`ensureGlobalConfigFile`,
+  funzioni `toStringList`/`toBool` semplificate (solo JSON), niente più letture di `process.env`
+  (l'handler non lo tocca più). Seed del file globale ora incondizionato (a parte file esistente).
+- Test: `config.test.ts` riscritto senza env (resolveConfig solo JSON, tolto il test skip-env);
+  `gate.test.ts`: ENV_KEYS ridotto a `PI_CODING_AGENT_DIR`, test "disabled gate" via file
+  (`{enabled:false}`) invece che env. Totale 95 test verdi.
+- README (sezione Configuration senza env), AGENTS §3-§4 aggiornati.
+
+## Sessione 8 — revisione finale + metadati repo
+- Verifica completa di codice/test/docs: `npm run check` verde (**95 test, 26 suite**); `npm pack --dry-run`
+  = 7 file (~14 kB). Nessun riferimento a env rimasto in `extensions/` (resta `PI_CODING_AGENT_DIR` nei test,
+  che è una env dell'host per `getAgentDir()`).
+- Scoperto il repo git (creato dall'utente): remote `git@github.com:goldfix/pi-allowlist-plugin.git`
+  (branch `main`; worktree su `task/small_improve`). Sostituiti i placeholder `<owner>` con `goldfix` nel README
+  e impostati `repository`/`homepage`/`bugs` in `package.json`. AGENTS §5 aggiornato.
+- Fix minori: README (riga di struttura `config.ts` non più "JSON + env"), commento obsoleto in `gate.test.ts`.
+- NB: la nota della sessione 6 sul "seed saltato con env" è storica: dalla sessione 7 il seed è incondizionato.
