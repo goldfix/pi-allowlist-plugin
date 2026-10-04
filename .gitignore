@@ -10,8 +10,8 @@ py_env.sh
 key.json
 *.pem
 source_app/
-# MEMORY.md
-# .agents
+MEMORY.md
+.agents
 
 # --- Node / npm --------------------------------------------
 node_modules/
