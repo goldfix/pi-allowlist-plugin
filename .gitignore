@@ -11,7 +11,7 @@ key.json
 *.pem
 source_app/
 MEMORY.md
-.agents
+# .agents
 
 # --- Node / npm --------------------------------------------
 node_modules/
