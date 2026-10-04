@@ -12,6 +12,7 @@ key.json
 source_app/
 MEMORY.md
 .agents
+pi-allowlist-plugin.jsonl
 
 # --- Node / npm --------------------------------------------
 node_modules/
