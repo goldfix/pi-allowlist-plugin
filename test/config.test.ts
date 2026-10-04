@@ -1,9 +1,11 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_ALLOW,
+  ensureGlobalConfigFile,
   globalConfigPath,
   loadConfig,
   loadFileConfig,
@@ -14,39 +16,32 @@ import {
 
 describe("resolveConfig", () => {
   it("applies minimal defaults", () => {
-    const config = resolveConfig({}, {});
+    const config = resolveConfig({});
     assert.equal(config.enabled, true);
     assert.ok(config.allow.includes("shell:git status *"));
+    assert.ok(config.allow.includes("shell:wc *"));
+    assert.ok(config.allow.includes("shell:grep *"));
+    assert.ok(config.allow.includes("shell:tail *"));
     assert.ok(config.allow.includes("mcp:docs-mcp-server"));
     assert.deepEqual(config.deny, []);
   });
-  it("options win over env", () => {
-    const config = resolveConfig(
-      { allow: ["shell:git pull *"], deny: ["shell:rm -rf *"], enabled: false },
-      {
-        ALLOWLIST_GATE_ALLOW: "shell:ls *",
-        ALLOWLIST_GATE_DENY: "shell:cat *",
-        ALLOWLIST_GATE_ENABLED: "true",
-      },
-    );
+  it("keeps explicit lists as-is", () => {
+    const config = resolveConfig({ allow: ["shell:git pull *"], deny: ["shell:rm -rf *"], enabled: false });
     assert.deepEqual(config.allow, ["shell:git pull *"]);
     assert.deepEqual(config.deny, ["shell:rm -rf *"]);
     assert.equal(config.enabled, false);
   });
-  it("env is comma/newline separated", () => {
-    const config = resolveConfig(
-      {},
-      { ALLOWLIST_GATE_ALLOW: "shell:a *,shell:b *\nshell:c *" },
-    );
+  it("accepts comma/newline separated string lists", () => {
+    const config = resolveConfig({ allow: "shell:a *,shell:b *\nshell:c *" });
     assert.deepEqual(config.allow, ["shell:a *", "shell:b *", "shell:c *"]);
   });
   it("explicit empty allow disables defaults", () => {
-    assert.deepEqual(resolveConfig({ allow: [] }, {}).allow, []);
+    assert.deepEqual(resolveConfig({ allow: [] }).allow, []);
   });
-  it("parses enabled flag variants", () => {
-    assert.equal(resolveConfig({}, { ALLOWLIST_GATE_ENABLED: "0" }).enabled, false);
-    assert.equal(resolveConfig({}, { ALLOWLIST_GATE_ENABLED: "off" }).enabled, false);
-    assert.equal(resolveConfig({ enabled: true }, { ALLOWLIST_GATE_ENABLED: "0" }).enabled, true);
+  it("parses the enabled flag, coercing non-boolean junk to the default", () => {
+    assert.equal(resolveConfig({ enabled: false }).enabled, false);
+    assert.equal(resolveConfig({ enabled: "off" }).enabled, false);
+    assert.equal(resolveConfig({ enabled: "garbage" }).enabled, true);
   });
 });
 
@@ -103,7 +98,7 @@ describe("loadConfig", () => {
     rmSync(agentDir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
-  const load = (projectTrusted: boolean) => loadConfig({ cwd, agentDir, configDirName: ".pi", projectTrusted, env: {} });
+  const load = (projectTrusted: boolean) => loadConfig({ cwd, agentDir, configDirName: ".pi", projectTrusted });
   const writeGlobal = (value: unknown) => {
     mkdirSync(join(agentDir, "extensions"), { recursive: true });
     writeFileSync(globalConfigPath(agentDir), typeof value === "string" ? value : JSON.stringify(value));
@@ -148,5 +143,28 @@ describe("loadConfig", () => {
     const config = load(true);
     assert.deepEqual(config.allow, []);
     assert.equal(config.warnings.length, 1);
+  });
+});
+
+describe("ensureGlobalConfigFile", () => {
+  let agentDir: string;
+  const target = () => join(agentDir, "extensions", "allowlist-gate.json");
+  beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "allowlist-seed-"));
+  });
+  afterEach(() => {
+    rmSync(agentDir, { recursive: true, force: true });
+  });
+  it("seeds a missing file with the built-in defaults", () => {
+    assert.equal(ensureGlobalConfigFile(agentDir), undefined);
+    const seeded = JSON.parse(readFileSync(target(), "utf-8")) as { allow: string[]; deny: string[] };
+    assert.deepEqual(seeded.allow, DEFAULT_ALLOW);
+    assert.deepEqual(seeded.deny, []);
+  });
+  it("never overwrites an existing file", () => {
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(target(), JSON.stringify({ allow: ["shell:custom *"] }));
+    assert.equal(ensureGlobalConfigFile(agentDir), undefined);
+    assert.equal(readFileSync(target(), "utf-8"), JSON.stringify({ allow: ["shell:custom *"] }));
   });
 });

@@ -37,12 +37,12 @@ extensions/
     index.ts    → extension entry (default factory): `tool_call` + `session_start` handlers, dialog
     policy.ts   → pure allowlist/denylist matching, `splitCommands()` (no external dependencies)
     paths.ts    → pure path normalization + inside/outside-project classification
-    config.ts   → configuration resolution (JSON files + env), fail-safe loading
+    config.ts   → configuration resolution (JSON files), fail-safe loading
 test/
   policy.test.ts  → pure matching: wildcards, splitCommands (bypass regressions, posix/powershell),
                     shell/edit/MCP/generic, deny-wins, forceAsk, passthrough
   paths.test.ts   → `~`/`@`/`../`/absolute normalization, inside vs outside the project
-  config.test.ts  → file/env resolution, global+project merge, trust, fail-safe on invalid files
+  config.test.ts  → file resolution, global+project merge, trust, fail-safe on invalid files
   gate.test.ts    → handler wiring with fake Pi API/UI: allow/ask/deny, session approvals,
                     serialized dialogs, outside-project, redirections, MCP, trust, disabled gate
 ```
@@ -114,10 +114,10 @@ so an abort dismisses them.
 
 Configuration (no `ctx.options` in Pi — follow the `sandbox` example pattern): JSON files
 `allowlist-gate.json`, global (`<agent-dir>/extensions/`) merged with project
-(`<cwd>/.pi/`, i.e. host `CONFIG_DIR_NAME`), **project lists replace wholesale**; env
-(`ALLOWLIST_GATE_ALLOW`/`DENY` comma-or-newline-separated, `ALLOWLIST_GATE_ENABLED`) is the
-fallback for keys the files do not define. An explicit `"allow": []` disables the defaults.
-Config is re-read on every `tool_call` (live edits, no reload).
+(`<cwd>/.pi/`, i.e. host `CONFIG_DIR_NAME`), **project lists replace wholesale**.
+An explicit `"allow": []` disables the defaults.
+Config is re-read on every `tool_call` (live edits, no reload). The global file is
+**auto-created with the defaults** on first use (`ensureGlobalConfigFile()`, atomic `wx` creation).
 **Security rules:** the project file is honored only when `ctx.isProjectTrusted()` (an untrusted
 repo must not widen its own allowlist); an invalid file fails safe as `{ "allow": [] }` plus a
 warning (`config.warnings`, shown once via `ctx.ui.notify`), never as the defaults.
@@ -129,8 +129,11 @@ Conventional Pi package layout: extension code under `extensions/allowlist-gate/
 `index.ts` entry needs **no manifest** — Pi discovers it. `package.json` publishes only
 `extensions` (+ README/LICENSE, always included); `files: ["extensions"]`, keyword
 `pi-package` for gallery eligibility. `prepublishOnly` runs `npm run check`. Verify the tarball
-with `npm pack --dry-run`. `repository`/`homepage`/`bugs` are unset until the GitHub URL is known.
-Publishing itself is the user's command.
+with `npm pack --dry-run`. Install paths (README Installation section): `pi install`
+from npm, git, or a local checkout, `pi -e` to try without installing, manual copy as
+fallback. The extension needs **no build step** (`.ts` loaded directly) and has no runtime
+dependencies. `repository`/`homepage`/`bugs` point at `github.com/goldfix/pi-allowlist-plugin`.
+Publishing, GitHub releases, and version bumps are the user's commands.
 
 ## 6. Operating rules
 

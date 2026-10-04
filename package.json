@@ -13,6 +13,12 @@
   ],
   "author": "pietro partescano",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/goldfix/pi-allowlist-plugin.git"
+  },
+  "homepage": "https://github.com/goldfix/pi-allowlist-plugin#readme",
+  "bugs": "https://github.com/goldfix/pi-allowlist-plugin/issues",
   "type": "module",
   "files": [
     "extensions"

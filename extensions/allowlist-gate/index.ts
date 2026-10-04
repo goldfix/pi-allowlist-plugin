@@ -27,7 +27,7 @@ import {
   type ToolCallEvent,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "./config.ts";
+import { ensureGlobalConfigFile, loadConfig } from "./config.ts";
 import { classifyPath } from "./paths.ts";
 import { evaluate, shellKindOf, splitCommands } from "./policy.ts";
 
@@ -129,12 +129,14 @@ export default function allowlistGate(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    const seedWarning = ensureGlobalConfigFile(getAgentDir());
     const config = loadConfig({
       cwd: ctx.cwd,
       agentDir: getAgentDir(),
       configDirName: CONFIG_DIR_NAME,
       projectTrusted: ctx.isProjectTrusted(),
     });
+    if (seedWarning) config.warnings.unshift(seedWarning);
     if (ctx.hasUI) {
       for (const warning of config.warnings) {
         if (reportedWarnings.has(warning)) continue;
