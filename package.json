@@ -1,0 +1,40 @@
+{
+  "name": "pi-allowlist-plugin",
+  "version": "0.1.0",
+  "description": "Pi extension that gates dispositive tool calls (edits, shell commands, MCP calls) behind an allowlist/denylist. Anything unlisted asks for approval via a UI dialog, enforced by the app and never by the model.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "allowlist",
+    "denylist",
+    "permissions",
+    "security",
+    "ai-agents"
+  ],
+  "author": "pietro partescano",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "extensions"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test test/policy.test.ts test/paths.test.ts test/config.test.ts test/gate.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run check"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.0.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
