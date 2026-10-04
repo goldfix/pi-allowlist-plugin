@@ -5,7 +5,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
@@ -18,10 +18,14 @@ interface FakeCtx {
   isProjectTrusted(): boolean;
   ui: {
     selectCalls: Array<{ title: string; options: string[] }>;
+    editorCalls: Array<{ title: string; prefill: string | undefined }>;
     notifications: string[];
     /** Choice returned by the next dialogs. */
     nextChoice: string | undefined;
+    /** Answer of the rules editor: receives the prefilled text, undefined = cancelled. */
+    editorAnswer: (prefill: string | undefined) => string | undefined;
     select(title: string, options: string[]): Promise<string | undefined>;
+    editor(title: string, prefill?: string): Promise<string | undefined>;
     notify(message: string): void;
   };
 }
@@ -36,13 +40,20 @@ type ToolCallHandler = (event: ToolCallEvent, ctx: FakeCtx) => Promise<ToolCallE
 function makeCtx(cwd: string, hasUI: boolean, trusted = true): FakeCtx {
   const ui: FakeCtx["ui"] = {
     selectCalls: [],
+    editorCalls: [],
     notifications: [],
     nextChoice: undefined,
+    editorAnswer: () => undefined,
     async select(title, options) {
       ui.selectCalls.push({ title, options });
       // Yield so that concurrent calls really interleave.
       await new Promise((resolve) => setImmediate(resolve));
       return ui.nextChoice;
+    },
+    async editor(title, prefill) {
+      ui.editorCalls.push({ title, prefill });
+      await new Promise((resolve) => setImmediate(resolve));
+      return ui.editorAnswer(prefill);
     },
     notify(message) {
       ui.notifications.push(message);
@@ -162,10 +173,22 @@ describe("allowlist gate", () => {
       const uiCtx = makeCtx(cwd, true);
       uiCtx.ui.nextChoice = "Allow once";
       assert.equal(await handler(bash("git push origin main"), uiCtx), undefined);
-      assert.deepEqual(uiCtx.ui.selectCalls[0].options, ["Allow once", "Allow for session", "Deny"]);
+      assert.deepEqual(uiCtx.ui.selectCalls[0].options, [
+        "Allow once",
+        "Allow for session",
+        "Allow & save rule (project)...",
+        "Deny",
+      ]);
       // Not remembered: the same call asks again.
       await handler(bash("git push origin main"), uiCtx);
       assert.equal(uiCtx.ui.selectCalls.length, 2);
+    });
+
+    it("untrusted projects do not offer the save-rule option", async () => {
+      const untrustedCtx = makeCtx(cwd, true, false);
+      untrustedCtx.ui.nextChoice = "Deny";
+      await handler(bash("git push origin main"), untrustedCtx);
+      assert.deepEqual(untrustedCtx.ui.selectCalls[0].options, ["Allow once", "Allow for session", "Deny"]);
     });
 
     it("'Deny' (or dialog dismissal) blocks the call", async () => {
@@ -203,6 +226,130 @@ describe("allowlist gate", () => {
       ]);
       assert.deepEqual(results, [undefined, undefined, undefined]);
       assert.equal(uiCtx.ui.selectCalls.length, 1);
+    });
+  });
+
+  describe("saving project rules", () => {
+    const SAVE = "Allow & save rule (project)...";
+    const projectFile = () => join(cwd, ".pi", "allowlist-gate.json");
+    const savedAllow = () => (JSON.parse(readFileSync(projectFile(), "utf-8")) as { allow: string[] }).allow;
+    /** Every check below drops the session approvals first: only the saved file may allow. */
+    const passesFromFileOnly = async (event: ToolCallEvent) => {
+      sessionStart();
+      return handler(event, makeCtx(cwd, false));
+    };
+
+    it("offers the editor with the full command and seeds the project file from the global config", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = (prefill) => prefill; // user accepts the proposal as-is
+
+      assert.equal(await handler(bash("git push origin main"), uiCtx), undefined);
+      assert.equal(uiCtx.ui.editorCalls[0].prefill, "shell:git push origin main");
+      assert.ok(savedAllow().includes("shell:git push origin main"));
+      assert.ok(savedAllow().includes("shell:git status *"), "global rules are replicated");
+      assert.ok(uiCtx.ui.notifications.some((n) => n.includes("saved 1 rule")));
+      assert.equal(await passesFromFileOnly(bash("git push origin main")), undefined);
+    });
+
+    it("a compound command is saved as one rule per sub-command, and then really passes", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = (prefill) => prefill;
+
+      await handler(bash("git add . && git commit -m wip"), uiCtx);
+      assert.equal(uiCtx.ui.editorCalls[0].prefill, "shell:git add .\nshell:git commit -m wip");
+      assert.equal(await passesFromFileOnly(bash("git add . && git commit -m wip")), undefined);
+    });
+
+    it("lets the user generalize or delete proposed lines", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = () => "shell:git commit *"; // dropped `git add .`, added a wildcard
+
+      await handler(bash("git add . && git commit -m wip"), uiCtx);
+      assert.ok(savedAllow().includes("shell:git commit *"));
+      assert.ok(!savedAllow().includes("shell:git add ."));
+      assert.equal((await passesFromFileOnly(bash("git add . && git commit -m wip")))?.block, true);
+      assert.equal(await passesFromFileOnly(bash("git commit -m other")), undefined);
+    });
+
+    it("adds the missing scope prefix", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = () => "git push *"; // forgot "shell:"
+
+      await handler(bash("git push origin main"), uiCtx);
+      assert.ok(savedAllow().includes("shell:git push *"));
+    });
+
+    it("cancelling the editor, or saving nothing, blocks the call and writes nothing", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = () => undefined; // Escape
+      const cancelled = await handler(bash("git push origin main"), uiCtx);
+      assert.match(cancelled?.reason ?? "", /cancelled/);
+
+      uiCtx.ui.editorAnswer = () => "  \n "; // every line deleted
+      const empty = await handler(bash("git push origin main"), uiCtx);
+      assert.match(empty?.reason ?? "", /no rule to save/);
+      assert.equal(existsSync(projectFile()), false);
+    });
+
+    it("saves edit/write targets as project-relative paths", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = (prefill) => prefill;
+
+      await handler(writeTo(join(cwd, "notes", "new.txt")), uiCtx);
+      assert.equal(uiCtx.ui.editorCalls[0].prefill, "edit:notes/new.txt");
+      assert.equal(await passesFromFileOnly(writeTo("notes/new.txt")), undefined);
+    });
+
+    it("saves an MCP call as its server", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = (prefill) => prefill;
+
+      await handler(makeEvent("mcp__db__query", {}), uiCtx);
+      assert.equal(uiCtx.ui.editorCalls[0].prefill, "mcp:db");
+      assert.equal(await passesFromFileOnly(makeEvent("mcp__db__other_tool", {})), undefined);
+    });
+
+    it("is not offered when a rule could never take effect (redirection, outside the project)", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = "Deny";
+      await handler(bash("echo hi > out.txt"), uiCtx);
+      await handler(writeTo(join(tmpdir(), "elsewhere", "f.txt")), uiCtx);
+      for (const call of uiCtx.ui.selectCalls) assert.ok(!call.options.includes(SAVE), call.title);
+    });
+
+    it("a sibling call covered by a rule saved meanwhile does not ask again", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = () => "shell:git push *";
+
+      const results = await Promise.all([
+        handler(bash("git push origin a"), uiCtx),
+        handler(bash("git push origin b"), uiCtx),
+      ]);
+      assert.deepEqual(results, [undefined, undefined]);
+      assert.equal(uiCtx.ui.selectCalls.length, 1);
+    });
+
+    it("an unreadable project file is never overwritten; the approved call runs once", async () => {
+      mkdirSync(join(cwd, ".pi"), { recursive: true });
+      writeFileSync(projectFile(), "{broken, my precious deny rules");
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = (prefill) => prefill;
+
+      assert.equal(await handler(bash("git push origin main"), uiCtx), undefined);
+      assert.equal(readFileSync(projectFile(), "utf-8"), "{broken, my precious deny rules");
+      assert.ok(uiCtx.ui.notifications.some((n) => /cannot save the rule/.test(n)));
+      // Nothing was remembered: the next identical call asks again.
+      uiCtx.ui.nextChoice = "Deny";
+      assert.equal((await handler(bash("git push origin main"), uiCtx))?.block, true);
     });
   });
 

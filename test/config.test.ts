@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
   mergeFileConfigs,
   projectConfigPath,
   resolveConfig,
+  saveProjectRules,
 } from "../extensions/allowlist-gate/config.ts";
 
 describe("resolveConfig", () => {
@@ -252,5 +253,66 @@ describe("formatStatusReport and buildStatusReport", () => {
     assert.match(report, /Session approvals \(1\)/);
     assert.match(report, /write notes\/todo\.md/);
     assert.match(report, /Warnings:\n\s*! seeded global file/);
+  });
+});
+
+describe("saveProjectRules", () => {
+  let agentDir: string;
+  let cwd: string;
+  const pPath = () => projectConfigPath(cwd, ".pi");
+  const save = (...rules: string[]) => saveProjectRules({ cwd, agentDir, configDirName: ".pi", rules });
+  const read = () => JSON.parse(readFileSync(pPath(), "utf-8")) as { enabled?: boolean; allow?: string[]; deny?: string[] };
+  const writeGlobal = (value: unknown) => {
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(globalConfigPath(agentDir), JSON.stringify(value));
+  };
+  const writeProject = (content: string) => {
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(pPath(), content);
+  };
+  beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "allowlist-save-agent-"));
+    cwd = mkdtempSync(join(tmpdir(), "allowlist-save-proj-"));
+  });
+  afterEach(() => {
+    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("seeds a missing project file with the effective global config plus the new rules", () => {
+    writeGlobal({ enabled: true, allow: ["shell:custom *"], deny: ["shell:rm *"] });
+    assert.equal(save("shell:a", "shell:b"), pPath());
+    assert.deepEqual(read(), { enabled: true, allow: ["shell:custom *", "shell:a", "shell:b"], deny: ["shell:rm *"] });
+  });
+
+  it("never touches the global file, and seeds it when it is missing too", () => {
+    save("shell:a");
+    const seeded = JSON.parse(readFileSync(globalConfigPath(agentDir), "utf-8")) as { allow: string[] };
+    assert.deepEqual(seeded.allow, DEFAULT_ALLOW);
+    assert.deepEqual(read().allow, [...DEFAULT_ALLOW, "shell:a"]);
+  });
+
+  it("appends to an existing project allowlist, keeping its other keys, without duplicates", () => {
+    writeProject(JSON.stringify({ enabled: false, allow: ["shell:existing *"], deny: ["shell:bad *"] }));
+    save("shell:existing *", "shell:added *");
+    assert.deepEqual(read(), { enabled: false, allow: ["shell:existing *", "shell:added *"], deny: ["shell:bad *"] });
+  });
+
+  it("a project file without `allow` inherits the GLOBAL allowlist, not the built-in defaults", () => {
+    writeGlobal({ allow: ["shell:custom *"] });
+    writeProject(JSON.stringify({ deny: ["shell:rm *"] }));
+    save("shell:new");
+    assert.deepEqual(read(), { deny: ["shell:rm *"], allow: ["shell:custom *", "shell:new"] });
+  });
+
+  it("refuses to overwrite a project file it cannot parse", () => {
+    writeProject("{broken");
+    assert.throws(() => save("shell:a"), /cannot be read/);
+    assert.equal(readFileSync(pPath(), "utf-8"), "{broken");
+  });
+
+  it("leaves no temporary file behind", () => {
+    save("shell:a");
+    assert.deepEqual(readdirSync(join(cwd, ".pi")), ["allowlist-gate.json"]);
   });
 });

@@ -119,6 +119,23 @@ export function parseRule(raw: string): ParsedRule | null {
   return { scope, pattern };
 }
 
+/** Ensures user-entered rules carry their expected scope prefix. */
+export function normalizeCustomRule(entered: string, defaultScope: string): string {
+  const trimmed = String(entered ?? "").trim();
+  if (!trimmed) return "";
+  if (defaultScope === "shell" && !trimmed.startsWith("shell:")) {
+    return `shell:${trimmed}`;
+  }
+  if (defaultScope === "edit" && !trimmed.startsWith("edit:")) {
+    return `edit:${trimmed}`;
+  }
+  if (defaultScope === "mcp" && !trimmed.startsWith("mcp:")) {
+    return `mcp:${trimmed}`;
+  }
+  return trimmed;
+}
+
+
 // Same semantics as OpenCode core Wildcard.match: `*` → `.*`, `?` → `.`,
 // plus the trailing " *" shorthand also matching the bare prefix. Like core,
 // matching is case-insensitive on Windows (case-insensitive file system).

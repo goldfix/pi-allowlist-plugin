@@ -23,7 +23,7 @@
  * `{ "allow": [] }` (nothing is auto-allowed, everything gated asks) and a
  * warning is reported through {@link GateConfig.warnings}.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { RuleLists } from "./policy.ts";
 
@@ -259,3 +259,49 @@ export function buildStatusReport(options: BuildStatusReportOptions): string {
   });
 }
 
+export interface SaveProjectRulesOptions {
+  cwd: string;
+  agentDir: string;
+  configDirName: string;
+  rules: string[];
+}
+
+/**
+ * Append rules to the project allowlist (`<cwd>/<configDirName>/allowlist-gate.json`);
+ * the global file is never touched. Returns the project file path.
+ *
+ * Project lists replace the global ones wholesale, so the new allowlist is
+ * built from the list the project *effectively* has now: its own `allow` when
+ * defined, otherwise the global one. A missing project file is seeded with the
+ * whole effective global config. A project file that cannot be parsed is never
+ * overwritten (it may hold rules the user wants to fix by hand): this throws.
+ */
+export function saveProjectRules(options: SaveProjectRulesOptions): string {
+  const path = projectConfigPath(options.cwd, options.configDirName);
+
+  let projectConfig: FileConfig | undefined;
+  if (existsSync(path)) {
+    const loaded = loadFileConfig(path);
+    if (loaded.warning) throw new Error(`${loaded.warning}; fix or remove it, then retry`);
+    projectConfig = loaded.config;
+  }
+
+  ensureGlobalConfigFile(options.agentDir);
+  const globalFile = loadFileConfig(globalConfigPath(options.agentDir));
+  const effective = resolveConfig(mergeFileConfigs(globalFile.config, projectConfig ?? {}));
+
+  const allow = [...effective.allow];
+  for (const rule of options.rules) {
+    if (!allow.includes(rule)) allow.push(rule);
+  }
+  const next: FileConfig = projectConfig
+    ? { ...projectConfig, allow }
+    : { enabled: effective.enabled, allow, deny: effective.deny };
+
+  mkdirSync(dirname(path), { recursive: true });
+  // Write-then-rename, so a crash never leaves a half-written config behind.
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", "utf-8");
+  renameSync(tmp, path);
+  return path;
+}
