@@ -34,17 +34,21 @@ Port the feature set of the sibling OpenCode plugin kept under `source_app/openc
 ```
 extensions/
   allowlist-gate/
-    index.ts    → extension entry (default factory): `tool_call` + `session_start` handlers, dialog
+    index.ts    → extension entry (default factory): `tool_call` + `session_start` handlers,
+                  `/allowlist` command, dialog
     policy.ts   → pure allowlist/denylist matching, `splitCommands()` (no external dependencies)
     paths.ts    → pure path normalization + inside/outside-project classification
-    config.ts   → configuration resolution (JSON files), fail-safe loading
+    config.ts   → configuration resolution (JSON files), status report, `saveProjectRules()`,
+                  fail-safe loading
 test/
   policy.test.ts  → pure matching: wildcards, splitCommands (bypass regressions, posix/powershell),
                     shell/edit/MCP/generic, deny-wins, forceAsk, passthrough
   paths.test.ts   → `~`/`@`/`../`/absolute normalization, inside vs outside the project
-  config.test.ts  → file resolution, global+project merge, trust, fail-safe on invalid files
+  config.test.ts  → file resolution, global+project merge, trust, fail-safe on invalid files,
+                    status report, saveProjectRules (seeding, inheritance, no overwrite)
   gate.test.ts    → handler wiring with fake Pi API/UI: allow/ask/deny, session approvals,
-                    serialized dialogs, outside-project, redirections, MCP, trust, disabled gate
+                    serialized dialogs, outside-project, redirections, MCP, trust, disabled gate,
+                    /allowlist command, "Allow & save rule" flow
 ```
 
 `source_app/` is **read-only reference material** (the OpenCode sibling plugin): never modify it.
@@ -59,12 +63,17 @@ Main handler: `pi.on("tool_call", …)`. It derives `(toolName, resources)` from
 
 - allowlist match → return `undefined` (passes silently)
 - denylist match → `{ block: true, reason }` (no dialog; the model receives the reason)
-- anything else gated → `ctx.ui.select("Allow once" | "Allow for session" | "Deny")`;
-  dismissal counts as deny. Without UI (`!ctx.hasUI`: print/JSON mode) gated calls are
-  **blocked fail-safe**.
+- anything else gated → `ctx.ui.select("Allow once" | "Allow for session" | "Allow & save rule (project)..." | "Deny")`
+  (the save option is offered only when `ctx.isProjectTrusted()`); dismissal counts as deny.
+  Without UI (`!ctx.hasUI`: print/JSON mode) gated calls are **blocked fail-safe**.
 - safe read-only tools → untouched (`undefined`, no dialog).
 
 A second handler, `session_start`, clears the in-memory session approvals.
+
+The extension also registers a slash command `pi.registerCommand("allowlist", …)` that displays a
+live status report: enabled state, project trust status, global and project configuration file paths
+(flagging untrusted project files as ignored), effective deny and allow rules, active session approvals,
+and any syntax or permission warnings.
 
 Rule syntax is `scope:pattern` with OpenCode-like wildcards (`*`, `?`):
 
@@ -106,11 +115,26 @@ project — a deliberate divergence from OpenCode, whose `external_directory` al
 Do not add read gating unless the user asks.
 
 Session approvals (`sessionAllowed`, created **inside the factory**, cleared on `session_start`)
-live **only in memory** and match exact `(toolName, resources)` calls. The allowlist file is the
-only persistence mechanism — tell users to add stable rules there. Dialogs are **serialized**
-through a promise queue (Pi runs parallel tool calls; the session set is re-checked inside the
-queue so an identical sibling call reuses the approval just granted) and receive `ctx.signal`
-so an abort dismisses them.
+live **only in memory** and match exact `(toolName, resources)` calls. Dialogs are **serialized**
+through a promise queue (Pi runs parallel tool calls) and receive `ctx.signal` so an abort dismisses
+them. Inside the queue the call is re-checked against the session set **and against a freshly
+loaded config**, so a sibling call covered by an approval or a rule saved meanwhile does not ask twice.
+
+**"Allow & save rule (project)..."** (`saveRules()` in `index.ts`, `saveProjectRules()` in `config.ts`):
+- Offered only if `ctx.isProjectTrusted()` **and** the ask has no `hint` — redirections and
+  outside-project targets ask regardless of the allowlist, so a saved rule would be useless.
+- Uses `ctx.ui.editor(title, prefill)` (multi-line, **really prefilled**; `ctx.ui.input` only has a
+  placeholder). One rule per line, the **complete** resource — never shortened or wildcarded by us.
+  The policy matches per sub-command, so a compound command yields one `shell:` rule per segment
+  (a single rule for the whole line would never match — regression-tested). MCP → `mcp:<server>`.
+  Lines are normalized with `normalizeCustomRule(line, scope)` (missing prefix added).
+- Writes **only** `<cwd>/.pi/allowlist-gate.json`; the global file is never modified (it is only
+  read, and seeded if missing). Project lists replace wholesale, so the new allowlist starts from
+  what the project *effectively* has: its own `allow`, else the global one; a missing file is
+  seeded with the whole effective global config. Write-then-rename, dedup.
+- A project file that fails to parse is **never overwritten** (`saveProjectRules` throws); the
+  handler then notifies an error and lets the already-approved call run once (nothing remembered).
+- Escape / empty editor → call blocked, nothing written.
 
 Configuration (no `ctx.options` in Pi — follow the `sandbox` example pattern): JSON files
 `allowlist-gate.json`, global (`<agent-dir>/extensions/`) merged with project

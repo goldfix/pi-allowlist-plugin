@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   evaluate,
   mcpServerOf,
+  normalizeCustomRule,
   parseRule,
   shellKindOf,
   splitCommands,
@@ -40,6 +41,25 @@ describe("parseRule", () => {
     });
     assert.equal(parseRule("  "), null);
     assert.equal(parseRule(":x"), null);
+  });
+});
+
+describe("normalizeCustomRule", () => {
+  it("keeps explicit scope prefixes untouched", () => {
+    assert.equal(normalizeCustomRule("shell:git status *", "shell"), "shell:git status *");
+    assert.equal(normalizeCustomRule("edit:src/*.ts", "edit"), "edit:src/*.ts");
+    assert.equal(normalizeCustomRule("mcp:docs-server", "mcp"), "mcp:docs-server");
+  });
+  it("prefixes default scope when missing", () => {
+    assert.equal(normalizeCustomRule("git status *", "shell"), "shell:git status *");
+    assert.equal(normalizeCustomRule("src/*.ts", "edit"), "edit:src/*.ts");
+    assert.equal(normalizeCustomRule("docs-server", "mcp"), "mcp:docs-server");
+  });
+  it("returns empty string for blank input", () => {
+    assert.equal(normalizeCustomRule("   ", "shell"), "");
+  });
+  it("leaves generic tools untouched", () => {
+    assert.equal(normalizeCustomRule("my-tool", "my-tool"), "my-tool");
   });
 });
 

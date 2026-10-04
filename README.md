@@ -18,7 +18,7 @@ It is the Pi port of the OpenCode plugin `opencode-allowlist-plugin`, adapted to
 |---|---|
 | Call matches the **allowlist** | Runs silently |
 | Call matches the **denylist** | Blocked, no dialog; the model receives the reason |
-| Anything else that can change things | A dialog asks: **Allow once** · **Allow for session** · **Deny** |
+| Anything else that can change things | A dialog asks: **Allow once** · **Allow for session** · **Allow & save rule (project)...** · **Deny** |
 | Read-only tools (`read`, `grep`, `find`, `ls`, MCP resource tools, …) | Never touched |
 | No UI available (print/JSON mode) | Gated calls are **blocked** (fail-safe) |
 
@@ -206,8 +206,51 @@ itself everything.
 ### "Allow for session"
 
 Session approvals exist **only in memory**: they match the exact same call (tool + target) and
-are dropped on every new/resumed/forked session and on reload. To make something permanent, add
-a rule to the allowlist file.
+are dropped on every new/resumed/forked session and on reload.
+
+### "Allow & save rule (project)..."
+
+Makes an approval permanent without hand-editing JSON. Choosing it opens an **editor
+prefilled with the exact rules for this call** — the complete command, never a shortened or
+wildcarded version; clean it up yourself if you want something broader:
+
+```text
+shell:git add .
+shell:git commit -m "wip"
+```
+
+- **One rule per line.** A compound command (`a && b | c`) is proposed as one rule per
+  sub-command, because that is how rules are matched. Edit, generalize (`shell:git commit *`) or
+  delete lines; a missing `shell:` / `edit:` / `mcp:` prefix is added for you. An empty editor or
+  Escape cancels the save and blocks the call.
+- File edits are proposed as `edit:<project-relative path>`; MCP calls as `mcp:<server>` (the
+  server is the finest unit for MCP).
+- The rules are appended to the `"allow"` list of `<project>/.pi/allowlist-gate.json`, effective
+  immediately (also for parallel calls waiting on a dialog). The **global file is never modified**.
+- Project lists replace the global ones, so a **new** project file starts as a copy of your
+  effective global config (nothing you rely on is lost); an existing one keeps all its keys. A
+  project file without `"allow"` inherits the global allowlist before the new rules are added.
+- A project file that cannot be parsed is **never overwritten**: the call you approved runs once,
+  an error explains why nothing was saved, and the file is left for you to fix.
+- Not offered in **untrusted** projects, nor for calls that ask regardless of the allowlist
+  (shell redirections, targets outside the project): a saved rule could not change the outcome.
+- Limitation: rules are one line each, so a sub-command with a newline inside quotes cannot be
+  saved as a working rule; use "Allow for session" for those.
+
+### Inspection command (`/allowlist`)
+
+Run `/allowlist` in Pi to view a diagnostic report of the effective gate configuration for the
+current project directory:
+
+- **Gate status**: `ENABLED` or `DISABLED`
+- **Project trust**: `Trusted` or `Untrusted` (explaining if `.pi/allowlist-gate.json` is ignored)
+- **Config files**: paths to the global and project configuration files and whether they were found
+- **Deny rules**: full list of effective deny rules
+- **Allow rules**: full list of effective allow rules
+- **Session approvals**: count and details of tool calls approved via "Allow for session" in the current session
+- **Warnings**: any JSON syntax errors or ignored files
+
+Configuration is resolved live, so changes to config files are reflected immediately.
 
 ## Known limitations
 
@@ -238,10 +281,10 @@ properties, `import type` for types) and relative imports with explicit `.ts` ex
 
 ```
 extensions/allowlist-gate/
-  index.ts    extension entry: the tool_call / session_start handlers, approval dialog
-  policy.ts   pure matching: rules, wildcards, splitCommands(), evaluate()
+  index.ts    extension entry: tool_call / session_start handlers, /allowlist command, dialog
+  policy.ts   pure matching: rules, wildcards, splitCommands(), evaluate(), normalizeCustomRule()
   paths.ts    pure path normalization and inside/outside-project classification
-  config.ts   JSON file configuration: defaults, global+project merge, fail-safe loading
+  config.ts   JSON file configuration: defaults, global+project merge, saveProjectRules, status report
 test/         node --test suites (policy, paths, config, gate wiring with a fake Pi API)
 ```
 

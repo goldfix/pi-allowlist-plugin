@@ -1,17 +1,20 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_ALLOW,
+  buildStatusReport,
   ensureGlobalConfigFile,
+  formatStatusReport,
   globalConfigPath,
   loadConfig,
   loadFileConfig,
   mergeFileConfigs,
   projectConfigPath,
   resolveConfig,
+  saveProjectRules,
 } from "../extensions/allowlist-gate/config.ts";
 
 describe("resolveConfig", () => {
@@ -166,5 +169,150 @@ describe("ensureGlobalConfigFile", () => {
     writeFileSync(target(), JSON.stringify({ allow: ["shell:custom *"] }));
     assert.equal(ensureGlobalConfigFile(agentDir), undefined);
     assert.equal(readFileSync(target(), "utf-8"), JSON.stringify({ allow: ["shell:custom *"] }));
+  });
+});
+
+describe("formatStatusReport and buildStatusReport", () => {
+  let agentDir: string;
+  let cwd: string;
+  beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "allowlist-report-agent-"));
+    cwd = mkdtempSync(join(tmpdir(), "allowlist-report-proj-"));
+  });
+  afterEach(() => {
+    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("formatStatusReport formats clean text with all sections", () => {
+    const report = formatStatusReport({
+      enabled: true,
+      projectTrusted: true,
+      globalPath: "/agent/allowlist-gate.json",
+      globalExists: true,
+      projectPath: "/proj/.pi/allowlist-gate.json",
+      projectExists: false,
+      deny: [],
+      allow: ["shell:git status *"],
+      sessionApproved: ["bash git push origin main"],
+      warnings: ["test warning"],
+    });
+
+    assert.match(report, /Allowlist Gate:\s*ENABLED/);
+    assert.match(report, /Project trust:\s*Trusted/);
+    assert.match(report, /Global:\s*\/agent\/allowlist-gate\.json/);
+    assert.match(report, /Project:\s*\(none\)/);
+    assert.match(report, /Deny rules \(0\):\n\s*\(none\)/);
+    assert.match(report, /Allow rules \(1\):\n\s*- shell:git status \*/);
+    assert.match(report, /Session approvals \(1\):\n\s*- bash git push origin main/);
+    assert.match(report, /Warnings:\n\s*! test warning/);
+  });
+
+  it("formatStatusReport flags untrusted project and disabled state", () => {
+    const report = formatStatusReport({
+      enabled: false,
+      projectTrusted: false,
+      globalPath: "/agent/allowlist-gate.json",
+      globalExists: false,
+      projectPath: "/proj/.pi/allowlist-gate.json",
+      projectExists: true,
+      deny: ["shell:rm *"],
+      allow: [],
+    });
+
+    assert.match(report, /Allowlist Gate:\s*DISABLED/);
+    assert.match(report, /Project trust:\s*Untrusted \(project config ignored\)/);
+    assert.match(report, /Global:\s*\/agent\/allowlist-gate\.json \(not found\)/);
+    assert.match(report, /Project:\s*\/proj\/\.pi\/allowlist-gate\.json \(IGNORED: untrusted project\)/);
+    assert.match(report, /Deny rules \(1\):\n\s*- shell:rm \*/);
+    assert.match(report, /Allow rules \(0\):\n\s*\(none\)/);
+    assert.match(report, /Session approvals \(0\):\n\s*\(none\)/);
+    assert.doesNotMatch(report, /Warnings:/);
+  });
+
+  it("buildStatusReport resolves live files and attaches warnings", () => {
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(globalConfigPath(agentDir), JSON.stringify({ allow: ["shell:git status *"] }));
+
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(projectConfigPath(cwd, ".pi"), JSON.stringify({ deny: ["shell:rm *"] }));
+
+    const report = buildStatusReport({
+      agentDir,
+      cwd,
+      configDirName: ".pi",
+      projectTrusted: true,
+      sessionApproved: ["write notes/todo.md"],
+      seedWarning: "seeded global file",
+    });
+
+    assert.match(report, /Allowlist Gate:\s*ENABLED/);
+    assert.match(report, /Project trust:\s*Trusted/);
+    assert.match(report, /Deny rules \(1\)/);
+    assert.match(report, /Allow rules \(1\)/);
+    assert.match(report, /Session approvals \(1\)/);
+    assert.match(report, /write notes\/todo\.md/);
+    assert.match(report, /Warnings:\n\s*! seeded global file/);
+  });
+});
+
+describe("saveProjectRules", () => {
+  let agentDir: string;
+  let cwd: string;
+  const pPath = () => projectConfigPath(cwd, ".pi");
+  const save = (...rules: string[]) => saveProjectRules({ cwd, agentDir, configDirName: ".pi", rules });
+  const read = () => JSON.parse(readFileSync(pPath(), "utf-8")) as { enabled?: boolean; allow?: string[]; deny?: string[] };
+  const writeGlobal = (value: unknown) => {
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(globalConfigPath(agentDir), JSON.stringify(value));
+  };
+  const writeProject = (content: string) => {
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(pPath(), content);
+  };
+  beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "allowlist-save-agent-"));
+    cwd = mkdtempSync(join(tmpdir(), "allowlist-save-proj-"));
+  });
+  afterEach(() => {
+    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("seeds a missing project file with the effective global config plus the new rules", () => {
+    writeGlobal({ enabled: true, allow: ["shell:custom *"], deny: ["shell:rm *"] });
+    assert.equal(save("shell:a", "shell:b"), pPath());
+    assert.deepEqual(read(), { enabled: true, allow: ["shell:custom *", "shell:a", "shell:b"], deny: ["shell:rm *"] });
+  });
+
+  it("never touches the global file, and seeds it when it is missing too", () => {
+    save("shell:a");
+    const seeded = JSON.parse(readFileSync(globalConfigPath(agentDir), "utf-8")) as { allow: string[] };
+    assert.deepEqual(seeded.allow, DEFAULT_ALLOW);
+    assert.deepEqual(read().allow, [...DEFAULT_ALLOW, "shell:a"]);
+  });
+
+  it("appends to an existing project allowlist, keeping its other keys, without duplicates", () => {
+    writeProject(JSON.stringify({ enabled: false, allow: ["shell:existing *"], deny: ["shell:bad *"] }));
+    save("shell:existing *", "shell:added *");
+    assert.deepEqual(read(), { enabled: false, allow: ["shell:existing *", "shell:added *"], deny: ["shell:bad *"] });
+  });
+
+  it("a project file without `allow` inherits the GLOBAL allowlist, not the built-in defaults", () => {
+    writeGlobal({ allow: ["shell:custom *"] });
+    writeProject(JSON.stringify({ deny: ["shell:rm *"] }));
+    save("shell:new");
+    assert.deepEqual(read(), { deny: ["shell:rm *"], allow: ["shell:custom *", "shell:new"] });
+  });
+
+  it("refuses to overwrite a project file it cannot parse", () => {
+    writeProject("{broken");
+    assert.throws(() => save("shell:a"), /cannot be read/);
+    assert.equal(readFileSync(pPath(), "utf-8"), "{broken");
+  });
+
+  it("leaves no temporary file behind", () => {
+    save("shell:a");
+    assert.deepEqual(readdirSync(join(cwd, ".pi")), ["allowlist-gate.json"]);
   });
 });
