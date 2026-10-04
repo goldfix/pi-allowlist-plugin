@@ -48,6 +48,7 @@ Pin a version with `npm:pi-allowlist-plugin@0.1.0`.
 
 ```bash
 pi install git:github.com/goldfix/pi-allowlist-plugin
+pi install git:github.com/goldfix/pi-allowlist-plugin@main
 ```
 
 Tags and commits are pinned: later
