@@ -1,12 +1,5 @@
 # pi-allowlist-plugin
 
----
-
-Support me – buy me a coffee! :)
-[PayPal](https://www.paypal.com/donate/?hosted_button_id=F34KU49T4UQGL)
-
----
-
 A [Pi](https://pi.dev) extension that puts **dispositive tool calls under applicative control**:
 file modifications, shell commands and MCP calls only run if they are on your **allowlist** —
 anything else asks you for approval in a dialog. Enforcement lives in the extension's
@@ -308,3 +301,10 @@ Common extension points:
 ## License
 
 [MIT](LICENSE)
+
+---
+
+Support me – buy me a coffee! :)
+[PayPal](https://www.paypal.com/donate/?hosted_button_id=F34KU49T4UQGL)
+
+---
