@@ -9,7 +9,6 @@ py_var.sh
 py_env.sh
 key.json
 *.pem
-source_app/
 MEMORY.md
 .agents
 pi-allowlist-plugin.jsonl
