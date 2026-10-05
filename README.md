@@ -1,5 +1,12 @@
 # pi-allowlist-plugin
 
+---
+
+Support me – buy me a coffee! :)
+[PayPal](https://www.paypal.com/donate/?hosted_button_id=F34KU49T4UQGL)
+
+---
+
 A [Pi](https://pi.dev) extension that puts **dispositive tool calls under applicative control**:
 file modifications, shell commands and MCP calls only run if they are on your **allowlist** —
 anything else asks you for approval in a dialog. Enforcement lives in the extension's
@@ -35,7 +42,7 @@ pi install npm:pi-allowlist-plugin              # personal (~/.pi/agent/settings
 pi install -l npm:pi-allowlist-plugin           # project-only (.pi/settings.json)
 ```
 
-Pin a version with `npm:pi-allowlist-plugin@0.1.0`.
+Pin a version with `npm:pi-allowlist-plugin@1.2.0`.
 
 ### From GitHub
 
@@ -301,10 +308,3 @@ Common extension points:
 ## License
 
 [MIT](LICENSE)
-
----
-
-Support me – buy me a coffee! :)
-[PayPal](https://www.paypal.com/donate/?hosted_button_id=F34KU49T4UQGL)
-
----
