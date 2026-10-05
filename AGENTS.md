@@ -8,8 +8,8 @@ with external services (shell commands, MCP calls, …). Unlisted operations ask
 approval through a **UI dialog** (`ctx.ui.select`). Enforcement is applicative (the `tool_call`
 handler blocks the call), never delegated to the model.
 
-Port the feature set of the sibling OpenCode plugin kept under `source_app/opencode-allowlist-plugin/`
-(read-only reference — never modify it), adapted to Pi's extension model (see §4 for the mapping).
+This extension is the complete Pi port and evolution of the sibling OpenCode plugin
+`opencode-allowlist-plugin`, adapted to Pi's extension model (see §4 for the mapping).
 
 ## 2. Stack and technical constraints
 
@@ -51,7 +51,6 @@ test/
                     /allowlist command, "Allow & save rule" flow
 ```
 
-`source_app/` is **read-only reference material** (the OpenCode sibling plugin): never modify it.
 `README.md` is the user-facing documentation (install, rules, config, limitations, contributing):
 keep it in sync with every behavior change. The OpenCode-era `scripts/install.*` were removed
 (`pi install <path>` / `pi -e` cover local installs).
@@ -173,7 +172,7 @@ Publishing, GitHub releases, and version bumps are the user's commands.
 - Verify through execution: run `npm run check` (typecheck + tests) after every implementation change.
   In this environment `node`/`npm` are not on the shell `PATH`: prepend Pi's bundled Node
   (`export PATH="/c/tc/Program/pi_agent/node:$PATH"`).
-- On doubt: stop, document what is unclear, and ask. Consult `source_app/` and Pi docs before guessing.
+- On doubt: stop, document what is unclear, and ask. Consult Pi docs before guessing.
 
 ## 7. Documentation languages
 
