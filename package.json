@@ -1,6 +1,6 @@
 {
   "name": "pi-allowlist-plugin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pi extension that gates dispositive tool calls (edits, shell commands, MCP calls) behind an allowlist/denylist. Anything unlisted asks for approval via a UI dialog, enforced by the app and never by the model.",
   "keywords": [
     "pi-package",
