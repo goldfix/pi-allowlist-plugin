@@ -24,6 +24,73 @@ It is the Pi port of the OpenCode plugin `opencode-allowlist-plugin`, adapted to
 
 Precedence: **deny wins over allow, allow wins over ask.** Dismissing the dialog counts as *Deny*.
 
+---
+
+## ⚡ Quick Start (TL;DR)
+
+### 1. Install
+
+```bash
+# Install globally in Pi
+pi install npm:pi-allowlist-plugin
+
+# Or try it in a single session without installing:
+pi -e npm:pi-allowlist-plugin
+```
+
+### 2. How it works in practice
+
+- **Silent passthrough**: Safe read-only tools (`read`, `grep`, `find`, `ls`) and allowlisted commands (`git status`, `git diff`, `cat`, etc.) execute immediately without prompts.
+- **Interactive approval**: When the agent attempts an unlisted command (e.g. `npm run build`, editing files, or calling an external MCP tool), Pi pauses and opens an interactive dialog:
+  ```text
+  Allow once  ·  Allow for session  ·  Allow & save rule (project)...  ·  Deny
+  ```
+- **Allow & save**: Choosing *"Allow & save rule (project)..."* opens an editor prefilled with the exact rule (e.g. `shell:npm run build` or `edit:src/app.ts`), saving it directly to `<project>/.pi/allowlist-gate.json` for future runs.
+- **Hard deny**: Denylisted patterns (e.g. `shell:rm -rf *`, `shell:npm publish *`, `mcp:github:delete_*`) are blocked immediately without prompting the user.
+
+### 3. Key commands
+
+| Command | Where | What it does |
+|---|---|---|
+| `/allowlist` | Inside Pi | Shows live gate status, project trust, effective allow/deny rules, and session approvals |
+| `pi list` | Shell | Lists installed Pi packages |
+| `pi update --extensions` | Shell | Updates installed extensions |
+| `pi remove <source>` | Shell | Uninstalls the extension |
+
+### 4. Minimal configuration example
+
+Create `.pi/allowlist-gate.json` in your project root:
+
+```jsonc
+{
+  "allow": [
+    "shell:npm test *",
+    "shell:npm run build *",
+    "edit:src/*",
+    "mcp:docs-mcp-server"
+  ],
+  "deny": [
+    "shell:rm -rf *",
+    "shell:npm publish *",
+    "edit:.env*"
+  ]
+}
+```
+
+---
+
+### 📖 Detailed documentation
+
+- 📦 [**Installation Guide**](#installation) — npm, GitHub, local checkout, manual copy, and package management
+- 📜 [**Rule Syntax**](#rule-syntax) — Syntax specification, wildcards, shell command splitting, redirections (`>`), file edits, and [MCP servers & tools](#mcp-servers-and-tools)
+- ⚙️ [**Configuration**](#configuration) — Global (`~/.pi/agent/extensions/`) vs project configuration, defaults, and fail-safe loading
+- 💾 [**Session Approvals & Rule Saving**](#allow-for-session) — In-memory approvals and interactive rule editing
+- 🔍 [**Inspection Command (`/allowlist`)**](#inspection-command-allowlist) — Live diagnostics and diagnostic report fields
+- ⚠️ [**Known Limitations**](#known-limitations) — Static analysis boundaries, wrappers (`sudo`, `bash -c`), and symlinks
+- 🛠️ [**Development & Contributing**](#development) — Running tests, architecture, and extension points
+
+---
+
 ## Requirements
 
 - [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`)
