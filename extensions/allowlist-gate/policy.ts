@@ -9,10 +9,11 @@
  * - `edit`  → the `edit` and `write` tools (they share this scope); the
  *              pattern is tested against the target file path.
  *              Example: `edit:docs/*`.
- * - `mcp`   → MCP servers, never single tools; the pattern is a server name
- *              and wildcards are allowed (`mcp:docs-mcp-server`,
- *              `mcp:docs-*`). Matching is done on the server segment of the
- *              Pi tool name `mcp__<server>__<tool>`.
+ * - `mcp`   → MCP servers and tools; the pattern can target a whole server
+ *              (`mcp:docs-mcp-server`, `mcp:docs-*`, `mcp:github:*`) or a
+ *              specific tool/pattern within a server (`mcp:github:search_*`,
+ *              `mcp:postgres:read_query`). Matching is done on the Pi tool name
+ *              `mcp__<server>__<tool>`.
  * - any other scope → exact tool name. Only whole-tool rules (`my-tool`,
  *              `my-tool:*`) are meaningful: the gate derives no resources for
  *              other tools, so a rule carrying a pattern never matches.
@@ -248,14 +249,40 @@ function scan(text: string, start: number, closer: ")" | "`" | null, shell: Shel
   return i;
 }
 
-/** Extract the server segment from a Pi MCP tool name, or null when not one. */
-export function mcpServerOf(toolName: string): string | null {
+/** MCP server and tool segments extracted from a Pi tool name. */
+export interface McpToolParts {
+  server: string;
+  tool: string;
+}
+
+/**
+ * Normalize an MCP tool pattern the way Pi sanitizes tool names: every
+ * character other than letters, digits and `_` becomes `_` (so a server tool
+ * called `delete.all` is exposed as `delete_all`). `*`/`?` wildcards are kept,
+ * which lets rules use the tool's real name as the MCP server documents it.
+ */
+export function namespaceTool(tool: string): string {
+  return String(tool ?? "").replace(/[^A-Za-z0-9_*?]/g, "_");
+}
+
+/** Extract MCP server and tool segments from a Pi MCP tool name, or null when not one. */
+export function mcpPartsOf(toolName: string): McpToolParts | null {
   if (!toolName.startsWith(MCP_PREFIX)) return null;
   const rest = toolName.slice(MCP_PREFIX.length);
   const sep = rest.indexOf(MCP_SEPARATOR);
   if (sep === -1) return null;
   const server = rest.slice(0, sep).trim();
-  return server ? namespaceServer(server) : null;
+  const tool = rest.slice(sep + MCP_SEPARATOR.length).trim();
+  if (!server || !tool) return null;
+  return {
+    server: namespaceServer(server),
+    tool,
+  };
+}
+
+/** Extract the server segment from a Pi MCP tool name, or null when not one. */
+export function mcpServerOf(toolName: string): string | null {
+  return mcpPartsOf(toolName)?.server ?? null;
 }
 
 type Applicability = "whole" | "resource";
@@ -263,9 +290,28 @@ type Applicability = "whole" | "resource";
 /** How a rule applies to a tool: whole-tool, per-resource, or not at all. */
 function applicability(rule: ParsedRule, toolName: string): Applicability | null {
   if (rule.scope === "mcp") {
-    const server = mcpServerOf(toolName);
-    if (server === null) return null;
-    return wildcardMatch(server, namespaceServer(rule.pattern)) ? "whole" : null;
+    const parts = mcpPartsOf(toolName);
+    if (!parts) return null;
+
+    const colonIdx = rule.pattern.indexOf(":");
+    let serverPattern: string;
+    let toolPattern: string;
+
+    if (colonIdx === -1) {
+      serverPattern = rule.pattern;
+      toolPattern = "*";
+    } else {
+      serverPattern = rule.pattern.slice(0, colonIdx).trim() || "*";
+      toolPattern = rule.pattern.slice(colonIdx + 1).trim() || "*";
+    }
+
+    const serverMatch = wildcardMatch(parts.server, namespaceServer(serverPattern));
+    if (!serverMatch) return null;
+
+    const toolMatch = wildcardMatch(parts.tool, namespaceTool(toolPattern));
+    if (!toolMatch) return null;
+
+    return "whole";
   }
   if (rule.scope === "shell") {
     if (!SHELL_TOOLS.has(toolName)) return null;

@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   evaluate,
+  mcpPartsOf,
   mcpServerOf,
   normalizeCustomRule,
   parseRule,
@@ -54,6 +55,7 @@ describe("normalizeCustomRule", () => {
     assert.equal(normalizeCustomRule("git status *", "shell"), "shell:git status *");
     assert.equal(normalizeCustomRule("src/*.ts", "edit"), "edit:src/*.ts");
     assert.equal(normalizeCustomRule("docs-server", "mcp"), "mcp:docs-server");
+    assert.equal(normalizeCustomRule("docs-server:read_*", "mcp"), "mcp:docs-server:read_*");
   });
   it("returns empty string for blank input", () => {
     assert.equal(normalizeCustomRule("   ", "shell"), "");
@@ -202,7 +204,7 @@ describe("evaluate: denylist wins", () => {
   });
 });
 
-describe("evaluate: mcp per-server", () => {
+describe("evaluate: mcp per-server and per-tool", () => {
   it("docs server allowed, db server asks", () => {
     const lists = { allow: ["mcp:docs-mcp-server"], deny: [] };
     assert.equal(evaluate("mcp__docs_mcp_server__fetch_url", [], lists).decision, "allow");
@@ -226,6 +228,87 @@ describe("evaluate: mcp per-server", () => {
     assert.equal(mcpServerOf("mcp__my_server__ping"), "my_server");
     assert.equal(mcpServerOf("mcp__my-server__ping"), "my_server");
     assert.equal(mcpServerOf("read"), null);
+  });
+  it("mcpPartsOf extracts server and tool segments", () => {
+    assert.deepEqual(mcpPartsOf("mcp__my_server__ping"), { server: "my_server", tool: "ping" });
+    assert.deepEqual(mcpPartsOf("mcp__my-server__ping-tool"), { server: "my_server", tool: "ping-tool" });
+    assert.deepEqual(mcpPartsOf("mcp__db__query__sub"), { server: "db", tool: "query__sub" });
+    assert.equal(mcpPartsOf("read"), null);
+    assert.equal(mcpPartsOf("mcp__invalid"), null);
+    assert.equal(mcpPartsOf("mcp____tool"), null);
+    assert.equal(mcpPartsOf("mcp__srv__"), null);
+  });
+  it("specific tool allowed on a server", () => {
+    const lists = { allow: ["mcp:github:search_repos"], deny: [] };
+    assert.equal(evaluate("mcp__github__search_repos", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__delete_repo", [], lists).decision, "ask");
+  });
+  it("wildcard tool pattern on a server", () => {
+    const lists = { allow: ["mcp:github:search_*"], deny: [] };
+    assert.equal(evaluate("mcp__github__search_repos", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__search_code", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__delete_repo", [], lists).decision, "ask");
+  });
+  it("server pattern combined with tool pattern", () => {
+    const lists = { allow: ["mcp:*-server:get_*"], deny: [] };
+    assert.equal(evaluate("mcp__api_server__get_user", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__api_server__post_user", [], lists).decision, "ask");
+    assert.equal(evaluate("mcp__db_client__get_user", [], lists).decision, "ask");
+  });
+  it("wildcard server with specific tool pattern", () => {
+    const lists = { allow: ["mcp:*:read_*"], deny: [] };
+    assert.equal(evaluate("mcp__srv1__read_all", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__srv2__read_all", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__srv1__write_all", [], lists).decision, "ask");
+  });
+  it("normalizes hyphens in tool pattern to match Pi tool naming", () => {
+    const lists = { allow: ["mcp:github:search-repos"], deny: [] };
+    assert.equal(evaluate("mcp__github__search_repos", [], lists).decision, "allow");
+  });
+  it("rules may use the tool's real name: Pi turns every non-word character into _", () => {
+    assert.equal(evaluate("mcp__srv__search_repos", [], { allow: ["mcp:srv:search.repos"], deny: [] }).decision, "allow");
+    // A deny written with the documented name must still hard-block (not just ask).
+    assert.equal(evaluate("mcp__srv__delete_all", [], { allow: ["mcp:srv"], deny: ["mcp:srv:delete.all"] }).decision, "deny");
+    assert.equal(evaluate("mcp__srv__rm_rf", [], { allow: [], deny: ["mcp:srv:rm/rf"] }).decision, "deny");
+    assert.equal(evaluate("mcp__srv__delete_all", [], { allow: ["mcp:srv"], deny: ["mcp:srv:delete.*"] }).decision, "deny");
+  });
+  it("tool rules never leak to other servers or non-MCP tools", () => {
+    const lists = { allow: ["mcp:github:search_*"], deny: [] };
+    assert.equal(evaluate("mcp__gitlab__search_code", [], lists).decision, "ask");
+    assert.equal(evaluate("bash", ["search_code"], lists).decision, "ask");
+  });
+  it("a trailing or leading colon degrades to a wildcard on that side", () => {
+    assert.equal(evaluate("mcp__a__b", [], { allow: ["mcp:a:"], deny: [] }).decision, "allow");
+    assert.equal(evaluate("mcp__a__b", [], { allow: ["mcp::b"], deny: [] }).decision, "allow");
+    assert.equal(evaluate("mcp__a__c", [], { allow: ["mcp::b"], deny: [] }).decision, "ask");
+  });
+  it("explicit whole-server wildcard behaves like bare server pattern", () => {
+    const lists = { allow: ["mcp:github:*"], deny: [] };
+    assert.equal(evaluate("mcp__github__search_repos", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__delete_repo", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__gitlab__search_repos", [], lists).decision, "ask");
+  });
+  it("bare mcp rule allows all MCP tools", () => {
+    const lists = { allow: ["mcp"], deny: [] };
+    assert.equal(evaluate("mcp__github__any_tool", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__other__other_tool", [], lists).decision, "allow");
+  });
+  it("specific tool deny overrides whole server allow", () => {
+    const lists = {
+      allow: ["mcp:github"],
+      deny: ["mcp:github:delete_*", "mcp:github:drop_*"],
+    };
+    assert.equal(evaluate("mcp__github__search_repos", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__delete_repo", [], lists).decision, "deny");
+    assert.equal(evaluate("mcp__github__drop_table", [], lists).decision, "deny");
+  });
+  it("wildcard tool deny overrides specific server allow", () => {
+    const lists = {
+      allow: ["mcp:github"],
+      deny: ["mcp:*:dangerous_*"],
+    };
+    assert.equal(evaluate("mcp__github__safe_call", [], lists).decision, "allow");
+    assert.equal(evaluate("mcp__github__dangerous_call", [], lists).decision, "deny");
   });
 });
 

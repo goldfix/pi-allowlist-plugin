@@ -60,6 +60,10 @@ export const DEFAULT_ALLOW: string[] = [
   "shell:grep *",
   "shell:tail *",
   "mcp:docs-mcp-server",
+  "shell:rg -n *",
+  "shell:find *",
+  "shell:head -n *",
+  "shell:pi mcp list"
 ];
 
 function toStringList(value: unknown): string[] | undefined {

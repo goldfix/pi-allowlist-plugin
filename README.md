@@ -42,7 +42,7 @@ pi install npm:pi-allowlist-plugin              # personal (~/.pi/agent/settings
 pi install -l npm:pi-allowlist-plugin           # project-only (.pi/settings.json)
 ```
 
-Pin a version with `npm:pi-allowlist-plugin@1.2.0`.
+Pin a version with `npm:pi-allowlist-plugin@<version>`.
 
 ### From GitHub
 
@@ -116,6 +116,7 @@ Rules are strings of the form `scope:pattern`. Patterns use the wildcards `*` (a
 | `shell:<pattern>` | `bash` **and** `powershell` | each sub-command of the command line |
 | `edit:<pattern>` | `edit` **and** `write` | the target file path |
 | `mcp:<server>` | every tool of one MCP server (`mcp__<server>__<tool>`) | the server name; wildcards allowed |
+| `mcp:<server>:<tool>` | specific tool or tool pattern on an MCP server | server and tool names; wildcards allowed |
 | `<tool>` or `<tool>:*` | a whole tool, by exact name (extension tools, …) | — |
 
 A rule without `:` means the whole tool. Examples: `shell:git pull *`, `edit:docs/*`,
@@ -147,11 +148,27 @@ all become `docs/a.md`). Note `*` also matches `/`, and patterns are anchored at
 `~/…`). Only the denylist can hard-block them; write such patterns as absolute paths with
 forward slashes (`edit:C:/Users/me/.ssh/*`).
 
-### MCP servers
+### MCP servers and tools
 
-Rules are per server, never per tool: `mcp:docs-mcp-server` allows every tool of that server.
-Dashes and underscores are interchangeable (Pi exposes `mcp__docs_mcp_server__fetch_url`).
-Servers not listed ask.
+MCP rules can target a whole server or individual tools within a server:
+
+- **Whole server**: `mcp:<server>` (or `mcp:<server>:*`) covers every tool of that server.
+  Example: `mcp:docs-mcp-server`, `mcp:docs-*`.
+- **Specific tool**: `mcp:<server>:<tool>` covers a specific tool or pattern.
+  Example: `mcp:github:search_*` allows search tools while unlisted tools ask.
+- **Cross-server tool patterns**: `mcp:*:read_*` covers read tools across all MCP servers.
+- **Deny overrides**: you can allow an entire server and deny specific dangerous tools:
+  ```jsonc
+  "allow": ["mcp:github"],
+  "deny": ["mcp:github:delete_*", "mcp:github:drop_*"]
+  ```
+
+Pi exposes MCP tools as `mcp__<server>__<tool>`, turning every character other than letters,
+digits and `_` into `_`. Rules apply the same normalization to both parts, so you can write the
+name the way the server documents it: `mcp:docs-mcp-server:fetch-url`, `mcp:srv:delete.all` and
+`mcp:docs_mcp_server:fetch_url` are equivalent to what Pi calls
+`mcp__docs_mcp_server__fetch_url`. Unlisted servers or tools ask. A bare `mcp` rule covers
+**every** MCP tool of every server — write it only on purpose.
 
 ### Other tools
 
@@ -194,8 +211,8 @@ gate runs**, so the user finds it ready to edit.
 The files are re-read on every tool call, so edits apply immediately (no `/reload`).
 
 **Defaults** (used for any list the files do not define): allow
-`git status/diff/log`, `ls`, `cat`, `pwd`, `echo`, `wc`, `grep`, `tail` and
-`mcp:docs-mcp-server`; deny nothing.
+`git status/diff/log`, `ls`, `cat`, `pwd`, `echo`, `wc`, `grep`, `tail`, `rg -n`, `find`,
+`head -n`, `pi mcp list` and `mcp:docs-mcp-server`; deny nothing.
 An explicit `"allow": []` disables the default allowlist.
 
 **Fail-safe loading.** An invalid file never widens access: it is treated as `{"allow": []}`
@@ -223,8 +240,9 @@ shell:git commit -m "wip"
   sub-command, because that is how rules are matched. Edit, generalize (`shell:git commit *`) or
   delete lines; a missing `shell:` / `edit:` / `mcp:` prefix is added for you. An empty editor or
   Escape cancels the save and blocks the call.
-- File edits are proposed as `edit:<project-relative path>`; MCP calls as `mcp:<server>` (the
-  server is the finest unit for MCP).
+- File edits are proposed as `edit:<project-relative path>`; MCP calls as `mcp:<server>:<tool>`.
+  You can save the specific tool rule as-is or generalize it in the editor to `mcp:<server>`
+  (or `mcp:<server>:*`) to authorize the whole server.
 - The rules are appended to the `"allow"` list of `<project>/.pi/allowlist-gate.json`, effective
   immediately (also for parallel calls waiting on a dialog). The **global file is never modified**.
 - Project lists replace the global ones, so a **new** project file starts as a copy of your
@@ -262,6 +280,10 @@ The gate is a guard rail against mistakes and careless prompts, **not a sandbox*
 - Absolute paths *outside* the project inside an in-project shell command are not detected
   (only the command text is available); rely on allow/deny rules for those.
 - Symbolic links inside the project that point outside are not resolved.
+- MCP tool names are split at the first `__` after `mcp__<server>`. A server whose name ends
+  with `_`, or contains `__`, is therefore ambiguous. When two tools of a server collide after
+  sanitization, Pi appends a hash suffix to their names, so an exact `mcp:<server>:<tool>` rule
+  (allow *or* deny) does not match those; use a wildcard (`mcp:<server>:<tool>*`).
 - Scope: the gate protects against *dispositive* operations (file changes, shell commands) and
   calls to *external services* (MCP, extension tools) that may have side effects or costs. Reading
   is out of scope by design: `read`, `grep`, `find` and `ls` are never gated, including reads
