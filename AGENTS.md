@@ -91,8 +91,12 @@ Rule syntax is `scope:pattern` with OpenCode-like wildcards (`*`, `?`):
   The resource comes from `classifyPath()`, which mirrors Pi's own path normalization
   (`@` prefix, `~`, `file://`, Git-Bash `/c/…`): project-relative with `/` separators when inside
   the project, absolute with `/` separators when outside.
-- `mcp:<server>` — per-server on Pi tool names `mcp__<server>__<tool>`; dashes/underscores
-  normalized, wildcards allowed. Resources ignored (server match is whole-tool).
+- `mcp:<server>` and `mcp:<server>:<tool>` — per-server or per-tool on Pi tool names
+  `mcp__<server>__<tool>`; server and tool patterns are sanitized like Pi does (every char other
+  than letters/digits/`_` → `_`, wildcards kept), so rules can use the tool's documented name. Supports whole-server
+  rules (`mcp:docs-mcp-server`, `mcp:docs-*`, `mcp:github:*`) and tool-specific rules
+  (`mcp:github:search_*`, `mcp:postgres:read_query`, `mcp:*:read_*`). Whole-server allow can be
+  refined with tool-specific deny (e.g. deny `mcp:github:delete_*`). Unlisted MCP calls ask.
 - any other scope → exact tool name (generic fallback for extension tools): `*`/bare rules
   cover the whole tool, anything unlisted asks. Pattern rules never match (no resources derived).
 - A rule without `:` means whole-action (e.g. `bash`).
@@ -125,7 +129,8 @@ loaded config**, so a sibling call covered by an approval or a rule saved meanwh
 - Uses `ctx.ui.editor(title, prefill)` (multi-line, **really prefilled**; `ctx.ui.input` only has a
   placeholder). One rule per line, the **complete** resource — never shortened or wildcarded by us.
   The policy matches per sub-command, so a compound command yields one `shell:` rule per segment
-  (a single rule for the whole line would never match — regression-tested). MCP → `mcp:<server>`.
+  (a single rule for the whole line would never match — regression-tested). MCP → `mcp:<server>:<tool>`
+  (the user can keep the exact tool or generalize to `mcp:<server>` / `mcp:<server>:*`).
   Lines are normalized with `normalizeCustomRule(line, scope)` (missing prefix added).
 - Writes **only** `<cwd>/.pi/allowlist-gate.json`; the global file is never modified (it is only
   read, and seeded if missing). Project lists replace wholesale, so the new allowlist starts from

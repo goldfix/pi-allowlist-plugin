@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import allowlistGate from "../extensions/allowlist-gate/index.ts";
+import { DEFAULT_ALLOW } from "../extensions/allowlist-gate/config.ts";
 
 interface FakeCtx {
   cwd: string;
@@ -306,13 +307,22 @@ describe("allowlist gate", () => {
       assert.equal(await passesFromFileOnly(writeTo("notes/new.txt")), undefined);
     });
 
-    it("saves an MCP call as its server", async () => {
+    it("saves an MCP call as its specific tool by default", async () => {
       const uiCtx = makeCtx(cwd, true);
       uiCtx.ui.nextChoice = SAVE;
       uiCtx.ui.editorAnswer = (prefill) => prefill;
 
       await handler(makeEvent("mcp__db__query", {}), uiCtx);
-      assert.equal(uiCtx.ui.editorCalls[0].prefill, "mcp:db");
+      assert.equal(uiCtx.ui.editorCalls[0].prefill, "mcp:db:query");
+      assert.equal(await passesFromFileOnly(makeEvent("mcp__db__query", {})), undefined);
+    });
+
+    it("allows user to generalize an MCP rule to the whole server in the editor", async () => {
+      const uiCtx = makeCtx(cwd, true);
+      uiCtx.ui.nextChoice = SAVE;
+      uiCtx.ui.editorAnswer = () => "mcp:db";
+
+      await handler(makeEvent("mcp__db__query", {}), uiCtx);
       assert.equal(await passesFromFileOnly(makeEvent("mcp__db__other_tool", {})), undefined);
     });
 
@@ -414,13 +424,26 @@ describe("allowlist gate", () => {
       assert.equal(uiCtx.ui.selectCalls.length, 0);
     });
 
-    it("MCP servers gate per server", async () => {
-      writeGlobalConfig({ allow: ["mcp:docs-mcp-server"] });
+    it("MCP servers gate per server and per tool", async () => {
+      writeGlobalConfig({
+        allow: ["mcp:docs-mcp-server", "mcp:db:query_*"],
+        deny: ["mcp:docs-mcp-server:delete_*"],
+      });
       const uiCtx = makeCtx(cwd, true);
+      // Whole server allowed
       assert.equal(await handler(makeEvent("mcp__docs_mcp_server__fetch_url", {}), uiCtx), undefined);
+      // Tool-specific deny on an allowed server: hard block by the denylist, no dialog
+      const blockedDelete = await handler(makeEvent("mcp__docs_mcp_server__delete_entry", {}), uiCtx);
+      assert.match(blockedDelete?.reason ?? "", /denylist/);
+      assert.equal(uiCtx.ui.selectCalls.length, 0);
+      // Tool-specific allow
+      assert.equal(await handler(makeEvent("mcp__db__query_users", {}), uiCtx), undefined);
+      assert.equal(uiCtx.ui.selectCalls.length, 0);
+      // Another tool of the same server is not covered: it asks
       uiCtx.ui.nextChoice = "Deny";
-      const blocked = await handler(makeEvent("mcp__db__query", { sql: "select 1" }), uiCtx);
-      assert.equal(blocked?.block, true);
+      const blockedDb = await handler(makeEvent("mcp__db__drop_users", {}), uiCtx);
+      assert.equal(blockedDb?.block, true);
+      assert.equal(uiCtx.ui.selectCalls.length, 1);
     });
 
     it("unknown extension tools ask", async () => {
@@ -484,7 +507,7 @@ describe("allowlist gate", () => {
       assert.match(report, /Global:\s*.+allowlist-gate\.json/);
       assert.match(report, /Project:\s*\(none\)/);
       assert.match(report, /Deny rules \(0\)/);
-      assert.match(report, /Allow rules \(11\)/);
+      assert.match(report, new RegExp(`Allow rules \\(${DEFAULT_ALLOW.length}\\)`));
       assert.match(report, /shell:git status \*/);
       assert.match(report, /Session approvals \(0\)/);
     });

@@ -13,7 +13,8 @@
  *
  * Rule syntax (`scope:pattern`, core-like `*`/`?` wildcards) is documented in
  * `policy.ts`. `edit:<pattern>` covers both `edit` and `write`; `shell:<…>`
- * covers `bash` and `powershell`; `mcp:<server>` covers a whole MCP server.
+ * covers `bash` and `powershell`; `mcp:<server>` and `mcp:<server>:<tool>`
+ * cover MCP servers and specific tools.
  *
  * Session approvals live only in memory and are dropped on every
  * `session_start` (new/resume/fork/reload). Persistence goes through the
@@ -37,6 +38,7 @@ import {
 import { classifyPath } from "./paths.ts";
 import {
   evaluate,
+  mcpPartsOf,
   mcpServerOf,
   normalizeCustomRule,
   shellKindOf,
@@ -105,7 +107,8 @@ function block(reason: string): ToolCallEventResult {
 /**
  * Rule scope plus the full rules proposed for saving, one per gated resource:
  * the policy matches each sub-command separately, so a rule for a whole
- * compound command line would never match. MCP has no finer unit than the server.
+ * compound command line would never match. For MCP, the specific tool is proposed
+ * (`mcp:<server>:<tool>`), which the user can generalize to the whole server.
  */
 function proposedRules(toolName: string, resources: string[]): { scope: string; rules: string[] } {
   if (toolName === "bash" || toolName === "powershell") {
@@ -114,8 +117,8 @@ function proposedRules(toolName: string, resources: string[]): { scope: string; 
   if (toolName === "edit" || toolName === "write") {
     return { scope: "edit", rules: resources.map((r) => `edit:${r}`) };
   }
-  const server = mcpServerOf(toolName);
-  if (server) return { scope: "mcp", rules: [`mcp:${server}`] };
+  const mcp = mcpPartsOf(toolName);
+  if (mcp) return { scope: "mcp", rules: [`mcp:${mcp.server}:${mcp.tool}`] };
   return { scope: toolName, rules: [toolName] };
 }
 
