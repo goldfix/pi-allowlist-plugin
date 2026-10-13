@@ -137,8 +137,8 @@ export function normalizeCustomRule(entered: string, defaultScope: string): stri
 }
 
 
-// Same semantics as OpenCode core Wildcard.match: `*` → `.*`, `?` → `.`,
-// plus the trailing " *" shorthand also matching the bare prefix. Like core,
+// Standard wildcard semantics: `*` → `.*`, `?` → `.`,
+// plus the trailing " *" shorthand also matching the bare prefix. Like host paths,
 // matching is case-insensitive on Windows (case-insensitive file system).
 export function wildcardMatch(input: string, pattern: string): boolean {
   const normalized = String(input).replaceAll("\\", "/");
@@ -153,8 +153,7 @@ export function wildcardMatch(input: string, pattern: string): boolean {
 
 /**
  * Split a shell command line into one sub-command per segment. Pi reports the
- * whole command text in `input.command` (OpenCode core used to split compound
- * commands for us), so the gate does it here.
+ * whole command text in `input.command`, so the gate splits compound commands here.
  *
  * Segments are separated by `&&`, `||`, `;`, `|`, `&`, newlines and
  * parentheses. Command substitutions (`$(...)`, and backticks in posix) are

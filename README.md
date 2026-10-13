@@ -12,8 +12,6 @@ file modifications, shell commands and MCP calls only run if they are on your **
 anything else asks you for approval in a dialog. Enforcement lives in the extension's
 `tool_call` handler, so the model cannot talk its way past it.
 
-It is the Pi port of the OpenCode plugin `opencode-allowlist-plugin`, adapted to Pi's extension model.
-
 | Situation | What happens |
 |---|---|
 | Call matches the **allowlist** | Runs silently |

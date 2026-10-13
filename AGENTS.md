@@ -8,8 +8,7 @@ with external services (shell commands, MCP calls, …). Unlisted operations ask
 approval through a **UI dialog** (`ctx.ui.select`). Enforcement is applicative (the `tool_call`
 handler blocks the call), never delegated to the model.
 
-This extension is the complete Pi port and evolution of the sibling OpenCode plugin
-`opencode-allowlist-plugin`, adapted to Pi's extension model (see §4 for the mapping).
+This extension is designed natively for Pi's extension model (see §4 for details).
 
 ## 2. Stack and technical constraints
 
@@ -52,8 +51,7 @@ test/
 ```
 
 `README.md` is the user-facing documentation (install, rules, config, limitations, contributing):
-keep it in sync with every behavior change. The OpenCode-era `scripts/install.*` were removed
-(`pi install <path>` / `pi -e` cover local installs).
+keep it in sync with every behavior change (`pi install <path>` / `pi -e` cover local installs).
 
 ## 4. Architecture
 
@@ -74,7 +72,7 @@ live status report: enabled state, project trust status, global and project conf
 (flagging untrusted project files as ignored), effective deny and allow rules, active session approvals,
 and any syntax or permission warnings.
 
-Rule syntax is `scope:pattern` with OpenCode-like wildcards (`*`, `?`):
+Rule syntax is `scope:pattern` with wildcards (`*`, `?`):
 
 - `shell:<pattern>` — covers **both** `bash` and `powershell` (Pi has no single shell action).
   The entry splits `input.command` with `splitCommands(command, shellKind)`: allow requires
@@ -87,7 +85,7 @@ Rule syntax is `scope:pattern` with OpenCode-like wildcards (`*`, `?`):
   slip past an allowlist or evade a deny rule. Add a regression test for every bypass found.
   Wrappers (`bash -c`, `sudo`, `env`, `xargs`, `eval`) are deliberately not unwrapped
   (documented limitation).
-- `edit:<pattern>` — covers **both** `edit` and `write` (shared scope, OpenCode parity).
+- `edit:<pattern>` — covers **both** `edit` and `write` (shared scope).
   The resource comes from `classifyPath()`, which mirrors Pi's own path normalization
   (`@` prefix, `~`, `file://`, Git-Bash `/c/…`): project-relative with `/` separators when inside
   the project, absolute with `/` separators when outside.
@@ -113,9 +111,8 @@ Read-only passthrough (`SAFE_PASSTHROUGH`): `read grep find ls question codemode
 the MCP resource tools. `codemode` is safe to skip because its sandbox has no fs/network and every
 tool a script calls re-enters `tool_call` (nested calls carry `parentToolCallId`). A deny rule still
 beats passthrough. **Scope decision (user):** the gate targets dispositive operations and calls to
-external services (side effects / costs). Reads are out of scope, including reads outside the
-project — a deliberate divergence from OpenCode, whose `external_directory` also asked for reads.
-Do not add read gating unless the user asks.
+external services (side effects / costs). Reads are out of scope by design, including reads
+outside the project. Do not add read gating unless the user asks.
 
 Session approvals (`sessionAllowed`, created **inside the factory**, cleared on `session_start`)
 live **only in memory** and match exact `(toolName, resources)` calls. Dialogs are **serialized**
